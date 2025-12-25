@@ -238,7 +238,7 @@ def AfpFaktura_importArtikels(globals, data, filename, paras, debug = False, pro
     imp.set_direct_mysql_storing()
     if deli:
         imp.set_csv_parameter(deli[0], deli[1])
-    res = imp.read_from_csv_file(data, mantable)
+    res = imp.read_from_file(data, mantable)
     if debug: print ("AfpFaktura_importArtikels loaded:", Afp_getNow().time(), data.get_value_length(mantable))
     if res:
         sel = res[0].get_selection(mantable)

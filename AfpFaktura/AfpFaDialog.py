@@ -1533,7 +1533,7 @@ class AfpDialog_FaManufact(AfpDialog):
         if not hers: hers = self.data.get_value("Hersteller")
         dir = self.data.get_globals().get_value("importdir", "Faktura")
         if not dir: dir = self.data.get_globals().get_value("homedir")
-        filename, ok = AfpReq_FileName(dir, "Artikelimport " + hers, fname + "*.csv") 
+        filename, ok = AfpReq_FileName(dir, "Artikelimport " + hers, fname + "*.*") 
         #print ("AfpDialog_FaManufact.get_importfile:", filename, ok)
         if ok:
             idat = Afp_dateString(filename)
@@ -1546,7 +1546,8 @@ class AfpDialog_FaManufact(AfpDialog):
             filename = None
         return filename
     ## get parameters (delimiters, columnnames) for article import
-    def get_importparas(self):
+    # @param typ - type of import (actuel 'csv' and 'xlsx' are supported
+    def get_importparas(self, typ):
         ken = self.data.get_value("Kennung")
         dels = self.data.get_value("ImportDel")
         cols = self.data.get_value("ImportCols")
@@ -1567,10 +1568,11 @@ class AfpDialog_FaManufact(AfpDialog):
                 paras.append(colis[ken])
             elif colis and "default" in colis:
                 paras.append(colis["default"])
-        deli, ok = AfpReq_Text("Bitte Begrenzungszeichen für den Artikelimport in der Form", "['a','b'] mit 'a' als Feldbegrenzung und 'b' als Zeichenfolge-Klammerung eingeben:", str(paras[0]), "Trennzeichen")
-        if ok:
-            paras[0] = eval(deli)
-            coli, ok = AfpReq_Text("Bitte Spaltenzuordnung in der Form", "{'db','csv',...} mit 'db' als Spaltenname in der Datenbank und 'csv' als Spaltenbezeichnung der Importdatei eingeben:", str(paras[1]), "Spaltenzuordnung")
+        ok = False
+        if typ == "csv":
+            deli, ok = AfpReq_Text("Bitte Begrenzungszeichen für den Artikelimport in der Form", "['a','b'] mit 'a' als Feldbegrenzung und 'b' als Zeichenfolge-Klammerung eingeben:", str(paras[0]), "Trennzeichen")
+            if ok: paras[0] = eval(deli)
+        coli, ok = AfpReq_Text("Bitte Spaltenzuordnung in der Form", "{'db','csv',...} mit 'db' als Spaltenname in der Datenbank und 'csv' als Spaltenbezeichnung der Importdatei eingeben:", str(paras[1]), "Spaltenzuordnung")
         if ok:
             paras[1] = eval(coli)
             return paras
@@ -1579,8 +1581,9 @@ class AfpDialog_FaManufact(AfpDialog):
     ## import manufacturer articles
     # @ param fname - name of file to be imported
     def import_articles(self, fname):
-        paras = self.get_importparas()
-        if not paras or len(paras) != 2 or not paras[0] or not paras[1]:
+        typ = fname.split(".")[-1].lower()
+        paras = self.get_importparas(typ)
+        if not paras or len(paras) != 2 or (not paras[0] and typ == 'csv') or not paras[1]:
              AfpReq_Info("Keine Importdaten des Herstellers '" + self.data.get_value("Hersteller") + "' vorhanden.", "Import kann nicht durchgeführt werden!", "Warnung")
         else:
             dry = self.data.get_globals().get_value("dry-run")

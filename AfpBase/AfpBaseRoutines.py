@@ -8,6 +8,7 @@
 # - AfpSelectionList
 #
 #   History: \n
+#        25 Dez. 2025 - AfpImport: add import from excel file and progressbar - Andreas.Knoblauch@afptech.de \n
 #        21 Feb. 2022 - AfpEmailSender: add attachment conversion to pdf - Andreas.Knoblauch@afptech.de \n
 #        30 Dez. 2021 - conversion to python 3 - Andreas.Knoblauch@afptech.de \n
 #        15 Jan 2020 - add mainfilter in AfpSelectionList- Andreas.Knoblauch@afptech.de \n 
@@ -39,6 +40,7 @@
 #
 
 import sys
+import openpyxl
 from AfpBase.AfpDatabase.AfpSQL import AfpSQL, AfpSQLTableSelection
 from AfpBase.AfpUtilities import *
 from AfpBase.AfpUtilities.AfpStringUtilities import *
@@ -810,15 +812,16 @@ class AfpImport(object):
         self.progress_bar = None
         self.progress_steps = globals.get_value("progress-steps")
         if not self.progress_steps: self.progress_steps = 100
-        # values used for csv-import
-        self.csv_delimiter = [","]
-        self.csv_reverseflag = False
-        self.csv_textbrackets = ["\""]
-        self.csv_use_column_header = None
+        # values used for imports
+        self.reverseflag = False
+        self.use_column_header = None
         self.column_map = None
         self.column_slice = None
         self.direct_mysql_storing = None
         self.date_conversion = True
+        # values used for csv-import
+        self.csv_delimiter = [","]
+        self.csv_textbrackets = ["\""]
         # values used for xml-import
         self.value_tags =  ["AfpValue"]
         self.value_end_tags =  ["/AfpValue"]
@@ -829,13 +832,13 @@ class AfpImport(object):
         self.import_available = False
         split = filename.split(".")
         self.type = split[-1].lower()
-        if self.type == "xml" or self.type == "csv":
+        if self.type == "xml" or self.type == "csv" or self.type == "xlsx":
             self.import_available = True
-            if self.type == "csv" and self.parameter:
-                self.csv_use_column_header = False
+            if (self.type == "xlsx" or self.type == "csv") and self.parameter:
+                self.use_column_header = False
                 for par in self.parameter:
                     if Afp_isString(self.parameter[par]): 
-                        self.csv_use_column_header = True
+                        self.use_column_header = True
         if self.debug: print("AfpImport Konstruktor",filename)
         if not self.import_available:
             print("WARNING Import-modul for file of type \"." +self.type + "\" not available!")
@@ -884,14 +887,82 @@ class AfpImport(object):
         return lines
             
     ## read file
-    # @param data - if given, AfpSelectionlList where data has to be filled into the main selection
-    def read_from_file(self, data=None):
+    # @param data - if given, AfpSelectionlList where data has to be filled into the main (or given) selection
+    # @param selname - if given, name of selection where data has to be filled
+    def read_from_file(self, data=None, selname=None):
         res = None
         if self.type == "xml":
             res = self.read_from_xml_file()
         elif self.type == "csv":
-            res = self.read_from_csv_file(data)
+            res = self.read_from_csv_file(data, selname)
+        elif self.type == "xlsx":
+            res = self.read_from_xlsx_file(data, selname)
         return res
+    ## set column indices due to parameter
+    # @param header - line or tuple with identifiers for columns
+    def set_column_map(self, header):
+        if Afp_isString(header):
+            head = self.split_csv_line(header)
+        else:
+            head = header
+        self.column_map = {}
+        #print ("AfpImport.set_column_map:", head)
+        for entry in self.parameter:
+            no_slice = True
+            if "[" in self.parameter[entry] and not self.globals.get_value("import-allow-brackets"):
+                if not self.column_slice:
+                    self.column_slice = {}
+                spar = self.parameter[entry].split("[")
+                par = Afp_fromString(spar[0])
+                slice = "[" + spar[1].strip()
+                if slice[0] == "[" and slice[-1] == "]":
+                    self.column_slice[entry] = slice
+                    no_slice = False
+            if no_slice:
+                par = self.parameter[entry]
+            #print("AfpImport.set_column_map entry:", entry, par, head, self.column_map, self.column_slice)
+            if Afp_isString(par):
+                self.column_map[entry] = head.index(par)
+            else:
+                self.column_map[entry] = int(par)
+        #print("AfpImport.set_column_map:", self.column_map, self.column_slice)
+    ## load data from column data into dictionary
+    # @param list - list of columns of one row
+    # @param as_list -flag if result should be retunrd as a list, otherwise a dictionay is returned
+    def read_column_data(self, list, aslist = False):
+        data = None
+        ldata = None
+        empty = True
+        if self.column_map and list:
+            data = {}
+            ldata = []
+            lgh = len(list)
+            if self.column_slice:
+                for entry in self.column_map:
+                    index = self.column_map[entry]
+                    if index < lgh and (list[index] != "" or aslist):
+                        if entry in self.column_slice:
+                            do = "list[index]" + self.column_slice[entry]
+                            cellval = eval(do)
+                        else:
+                            cellval = list[index]
+                        data[entry] = Afp_fromString(cellval, self.date_conversion)
+                        ldata.append(Afp_toString(data[entry]))
+                        if empty and cellval: empty = False
+                #print("AfpImport.set_column_map:", data, ldata)
+            else:
+                for entry in self.column_map:
+                    index = self.column_map[entry]
+                    if index < lgh and (list[index] != "" or aslist):
+                        data[entry] = Afp_fromString(list[index], self.date_conversion)
+                        ldata.append(Afp_toString(data[entry]))
+                        if empty and list[index]: empty = False
+        if empty:
+            return None
+        elif aslist:
+            return ldata
+        else:
+            return data
     #
     # specific methods for csv import
     #
@@ -904,33 +975,9 @@ class AfpImport(object):
             if delimiter:
                 self.csv_delimiter = delimiter
             if not rev is None:
-                self.csv_reverseflag = rev
+                self.reverseflag = rev
             self.csv_textbrackets = brackets
-    ## set column indices due to parameter
-    # @param header - line with identifiers for columns
-    def set_column_map(self, header):
-        head = self.split_csv_line(header)
-        self.column_map = {}
-        #print ("AfpImport.set_column_map:", head)
-        for entry in self.parameter:
-            no_slice = True
-            if "[" in self.parameter[entry] and not self.globals.get_value("import-csv-allow-brackets"):
-                if not self.column_slice:
-                    self.column_slice = {}
-                spar = self.parameter[entry].split("[")
-                par = Afp_fromString(spar[0])
-                slice = "[" + spar[1].strip()
-                if slice[0] == "[" and slice[-1] == "]":
-                    self.column_slice[entry] = slice
-                    no_slice = False
-            if no_slice:
-                par = self.parameter[entry]
-            if Afp_isString(par):
-                self.column_map[entry] = head.index(par)
-            else:
-                self.column_map[entry] = int(par)
-        #print("AfpImport.set_column_map:", self.column_map, self.column_slice)
-            
+             
     ## read a csv line according to given parameters
     # @param line - line to be splitted
     def split_csv_line(self, line):
@@ -961,73 +1008,43 @@ class AfpImport(object):
            # print ("AfpImport.split_csv_line list:", list)
         #print ("AfpImport.split_csv_line result:", list)
         return list
-    ## load data from column data into dictionary
-    # @param list - list of columns of one row
-    # @param as_list -flag if result should be retunrd as a list, otherwise a dictionay is returned
-    def read_column_data(self, list, aslist = False):
-        data = None
-        if self.column_map and list:
-            data = {}
-            ldata = []
-            lgh = len(list)
-            if self.column_slice:
-                for entry in self.column_map:
-                    index = self.column_map[entry]
-                    if index < lgh and (list[index] != "" or aslist):
-                        if entry in self.column_slice:
-                            do = "list[index]" + self.column_slice[entry]
-                            cellval = eval(do)
-                        else:
-                            cellval = list[index]
-                        data[entry] = Afp_fromString(cellval, self.date_conversion)
-                        ldata.append(Afp_toString(data[entry])) 
-                #print("AfpImport.set_column_map:", data, ldata)
-            else:
-                for entry in self.column_map:
-                    index = self.column_map[entry]
-                    if index < lgh and (list[index] != "" or aslist):
-                        data[entry] = Afp_fromString(list[index], self.date_conversion)
-                        ldata.append(Afp_toString(data[entry]))
-        if aslist:
-            return ldata
-        else:
-            return data
-                
+                 
     ## read a csv file according to given parameters
     # @param data - AfpSelectionList where data has to be filled into the main selection
     # @param selname - if given, name of selection where data has to be filled
     def read_from_csv_file(self, data, selname = None):
         fdata = Afp_importFileLines(self.filename)
-        if  self.csv_use_column_header:
+        if  self.use_column_header:
             self.set_column_map(fdata[0])
             fdata = fdata[1:]
-        if self.csv_reverseflag: fdata.reverse()
+        if self.reverseflag: fdata.reverse()
         if self.progress_bar:
             self.progress_bar.set_complete(len(fdata))
         if self.direct_mysql_storing or len(fdata) > 10000:
-            self.write_to_database(fdata, data, selname)
+            self.write_lines_to_database(fdata, data, selname)
             return None
         else:
-            data = self.write_to_data(fdata, data, selname)
+            data = self.write_lines_to_data(fdata, data, selname)
             return [data]
     ## fill file-data into the appropriate selection-list in data
     # @param fdata - lines of filedata to be read
     # @param data - AfpSelectionList where data has to be filled into the main selection
     # @param selname - if given, name of selection where data has to be filled
-    def write_to_data(self, fdata, data, selname = None):
+    def write_lines_to_data(self, fdata, data, selname = None):
         cnt = 0
         for line in fdata:
             list = self.split_csv_line(line)
             new_data = self.read_column_data(list)
             if self.progress_bar:
                 self.progress_bar.plus_step()
+            if new_data is None: continue
             data.set_data_values(new_data, selname, -1)
         return data
     ## write file-data directyl into the mysql database table
     # @param fdata - lines of filedata to be read
     # @param data - AfpSelectionList where data has to be filled into the main selection
     # @param selname - if given, name of selection where data has to be filled
-    def write_to_database(self, fdata, data, selname = None):
+    def write_lines_to_database(self, fdata, data, selname = None):
         table = data.get_selection(selname).get_tablename()
         mysql = data.get_mysql()
         cols = []
@@ -1037,7 +1054,84 @@ class AfpImport(object):
             list = self.split_csv_line(line)
             new_data = self.read_column_data(list,  True)
             if self.progress_bar:
-                self.progress_bar.plus_step()  
+                self.progress_bar.plus_step()
+            if new_data is None: continue  
+            mysql.write_insert(table, cols, [new_data])
+    #
+    # specific methods for xlsx import
+    #
+    ## get value row for xlsx-sheet
+    # @param sheet - xlsx-sheet where to extract the row
+    # @param index - index of row to bw extracted 
+    def get_xlsx_row(self, sheet, index):
+        row = None
+        for r in sheet.iter_rows(min_row=index, max_row=index, values_only=True):
+            row = r
+        return row
+    ## read a xlsx file according to given parameters
+    # @param data - AfpSelectionList where data has to be filled into the main selection
+    # @param selname - if given, name of selection where data has to be filled
+    def read_from_xlsx_file(self, data, selname = None):
+        doc = openpyxl.load_workbook(self.filename)
+        sheet = doc.active
+        if  self.use_column_header:
+            self.set_column_map(self.get_xlsx_row(sheet, 1))
+        if self.progress_bar:
+            self.progress_bar.set_complete(sheet.max_row) 
+            self.progress_bar.plus_step()
+        if self.direct_mysql_storing or sheet.max_row > 10000:
+            self.write_sheet_to_database(sheet, data, selname)
+            return None
+        else:
+            data = self.write_sheet_to_data(sheet, data, selname)
+            return [data]
+    ## fill file-data into the appropriate selection-list in data
+    # @param sheet - excelsheet to be read
+    # @param data - AfpSelectionList where data has to be filled into the main selection
+    # @param selname - if given, name of selection where data has to be filled
+    def write_sheet_to_data(self, sheet, data, selname = None):
+        cnt = 0
+        if self.reverseflag:
+            end = 1
+            start = sheet.max_row
+            step = -1
+        else:
+            start = 2
+            end = sheet.max_row + 1
+            step = 1
+        for i in range(start, end, step):
+            list = self.get_xlsx_row(sheet, i)
+            new_data = self.read_column_data(list)
+            if self.progress_bar:
+                self.progress_bar.plus_step()
+            if new_data is None: continue
+            data.set_data_values(new_data, selname, -1)
+        return data
+    ## write file-data directyl into the mysql database table
+    # @param sheet - excelsheet to be read
+    # @param data - AfpSelectionList where data has to be filled into the main selection
+    # @param selname - if given, name of selection where data has to be filled
+    def write_sheet_to_database(self, sheet, data, selname = None):
+        table = data.get_selection(selname).get_tablename()
+        mysql = data.get_mysql()
+        cols = []
+        for col in self.column_map:
+            cols.append(col)
+        if self.reverseflag:
+            end = 1
+            start = sheet.max_row
+            step = -1
+        else:
+            start = 2
+            end = sheet.max_row + 1
+            step = 1
+        for i in range(start, end, step):
+            list = self.get_xlsx_row(sheet, i)        
+            new_data = self.read_column_data(list,  True)
+            if self.progress_bar:
+                self.progress_bar.plus_step()
+            #print("AfpImport.write_sheet_to_database:", i, end, list)
+            if new_data is None: continue
             mysql.write_insert(table, cols, [new_data])
     #
     # specific methods for xml import
