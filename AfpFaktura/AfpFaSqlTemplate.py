@@ -95,6 +95,7 @@ def AfpFaktura_getSqlTables(flavour = None):
     required["ARTSUR"] = """CREATE TABLE `ARTSUR` (
   `HersNr` smallint NOT NULL,
   `PreisGrp` char(5) CHARACTER SET latin1 COLLATE latin1_german2_ci DEFAULT NULL,
+  `Value` float(9,2) DEFAULT NULL,
   `Handelsspanne` smallint NOT NULL,
   KEY `HersNr` (`HersNr`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_german2_ci;"""

@@ -969,7 +969,13 @@ class AfpDialog_FaArticle(AfpDialog):
     ## update prices due to changed value
     # @param name - name of ui-object that has been changed
     def reset_prices(self, name):
+        lstp = 0.0
+        disc = 0.0
+        ek = 0.0
+        sur = 0.0
+        prs = 0.0
         go = False
+        #breakpoint()
         if name == "Liste_Artikel" or name == "Rabatt_Artikel":
             lst = self.text_Liste.GetValue()
             lstp = Afp_floatString(lst)
@@ -995,7 +1001,7 @@ class AfpDialog_FaArticle(AfpDialog):
                 lstp = Afp_fromString(self.text_Liste.GetValue())
                 disc = 0
                 if lstp:
-                    disc = 100 - int(100*ek/lstp)
+                    disc = 100 - int(100*ek/lstp + 0.5)
                 self.text_Rabatt.SetValue(Afp_toString(disc))
                 if "Rabatt_Artikel" in self.preset and Afp_toString(disc) == self.preset["Rabatt_Artikel"]:
                     self.text_Rabatt.SetBackgroundColour(self.preseteditcolor)
@@ -1018,7 +1024,7 @@ class AfpDialog_FaArticle(AfpDialog):
                 if not prs: prs = 0.0
                 sur = 0
                 if ek:
-                    sur = 100 - int(100*prs/ek)
+                    sur = int(100*prs/ek + 0.5) - 100
                 self.text_Hsp.SetValue(Afp_toString(sur))
                 if "Hsp_Artikel" in self.preset and Afp_toString(sur) == self.preset["Hsp_Artikel"]:
                     self.text_Hsp.SetBackgroundColour(self.preseteditcolor)
@@ -1121,6 +1127,9 @@ class AfpDialog_FaArticle(AfpDialog):
         data = {}
         for entry in self.changed_text:
             name, wert = self.Get_TextValue(entry)
+            if entry in self.preset:
+                if wert == self.preset[entry]:
+                    wert = None
             data[name] = wert
         if data and (len(data) > 2 or not self.new):
             data = self.complete_data(data)
@@ -1204,6 +1213,7 @@ class AfpDialog_FaArticle(AfpDialog):
     # @param event - event which initiated this action
     def On_KillFocus(self,event):
         name = event.GetEventObject().GetName()
+        AfpDialog.On_KillFocus(self, event)
         TextBox = self.FindWindowByName(name)
         #print("AfpDialog_FaArticle.On_KillFocus:", name, name in self.textmap,  name in self.preset, TextBox.GetValue(), self.data.get_string_value(self.textmap[name]), TextBox.GetValue() == self.data.get_string_value(self.textmap[name]))
         if name in self.textmap:
@@ -1214,9 +1224,9 @@ class AfpDialog_FaArticle(AfpDialog):
             val = self.data.get_value(self.textmap[name])
             if not self.new and (Afp_isNumeric(val) and not Afp_isEps(Afp_fromString(TextBox.GetValue()) - val)) or (TextBox.GetValue() == Afp_toString(val)):
                 TextBox.SetBackgroundColour(self.editcolor)
+                if name in self.changed_text: self.changed_text.pop(name)
                 return
         TextBox.SetBackgroundColour(self.changecolor)
-        AfpDialog.On_KillFocus(self, event)
     ##  Eventhandler killfocus of possiby presetted textboxes\n
     # @param event - event which initiated this action   
     def On_handlePricing(self,event):
@@ -1229,8 +1239,6 @@ class AfpDialog_FaArticle(AfpDialog):
                 if self.presetedit[i] == name:
                     self.presetedit.pop(i)
                     break
-            #print("AfpDialog_FaArticle.On_handlePricing:", name, self.presetedit)
-        #self.Pop_intristic()
         self.On_KillFocus(event)
     ##  Eventhandler ComboBox  select manufacurer\n
     # @param event - event which initiated this action   
@@ -1683,11 +1691,11 @@ class AfpDialog_FaManufact(AfpDialog):
     ## maintain manufacturer articles in main article database
     def maintain_articles(self):
         article = True
-        ask = True
+        ask = False
         eingabe = ""
         while article:
             article = AfpLoad_FaArtikelAusw(self.data.get_globals(), "ArtikelNr", eingabe, "ARTIKEL", "!HersNr.ARTIKEL = " + self.data.get_string_value(), ask)
-            print ("AfpDialog_FaManufact.maintain_articles:", article)
+            #print ("AfpDialog_FaManufact.maintain_articles:", article)
             if article:
                 eingabe = article
                 ask = False
