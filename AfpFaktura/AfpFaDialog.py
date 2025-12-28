@@ -1385,6 +1385,14 @@ class AfpDialog_FaManufact(AfpDialog):
         self.line5_sizer.AddSpacer(10)
         self.line5_sizer.Add(self.line5b_sizer,1,wx.EXPAND)
         self.line5_sizer.AddSpacer(10)
+
+        self.button_Global = wx.Button(self, -1, label="&Global", name="Global_FaManu")
+        self.Bind(wx.EVT_BUTTON, self.On_Global, self.button_Global)
+        self.line6_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.line6_sizer.AddStretchSpacer(1)
+        self.line6_sizer.Add(self.button_Global,0,wx.EXPAND)
+        self.line6_sizer.AddStretchSpacer(1)
+
         
         self.left_sizer.AddSpacer(10)
         self.left_sizer.Add(self.line1_sizer,0,wx.EXPAND)
@@ -1396,6 +1404,8 @@ class AfpDialog_FaManufact(AfpDialog):
         self.left_sizer.Add(self.line3_sizer,1,wx.EXPAND)
         self.left_sizer.AddSpacer(10)
         self.left_sizer.Add(self.line4_sizer,1,wx.EXPAND)
+        self.left_sizer.AddSpacer(10)
+        self.left_sizer.Add(self.line6_sizer,0,wx.EXPAND)
         self.left_sizer.AddSpacer(10)
 
         self.button_Neu = wx.Button(self, -1, label="&Neu", name="Neu_FaManu")
@@ -1428,20 +1438,20 @@ class AfpDialog_FaManufact(AfpDialog):
     ## populate discount list
     def Pop_Liste_Einkauf(self):
         #print ("AfpDialog_FaManufact.Pop_Liste_Einkauf not implemented yet!")
-        self.populate_list(self.liste_Einkauf, "ARTDIS")
+        self.populate_list("ARTDIS", self.liste_Einkauf)
     ## populate surcharge list
     def Pop_Liste_Verkauf(self):
         #print ("AfpDialog_FaManufact.Pop_Liste_Verkauf not implemented yet!")
-        self.populate_list(self.liste_Verkauf, "ARTSUR")
+        self.populate_list("ARTSUR", self.liste_Verkauf)
     ## populate addresslabels
     def Pop_Adresse(self):
         self.label_AdName.SetLabel(self.data.get_value("Name.ADRESSE"))
         self.label_AdVorname.SetLabel(self.data.get_value("Vorname.ADRESSE"))
         self.label_AdOrt.SetLabel(self.data.get_value("Ort.ADRESSE"))
     ## populate lists with discount or surcharge data
-    # @param lst - dialog list object to be poulated
     # @param sel - name of selection holding the data for population 
-    def populate_list(self, lst, sel):
+    # @param lst - if given, dialog list object to be poulated, no output created
+    def populate_list(self, sel, lst=None):
         self.data.sort_price_addons(sel)
         data = self.data.get_value_rows(sel)
         liste = ["--- neuen Eintrag anfügen ---"]
@@ -1453,17 +1463,84 @@ class AfpDialog_FaManufact(AfpDialog):
             #print ("AfpDialog_FaManufact.populate_list row:", row)
             if row[0]:
                 if len(row) > 2 and not row[2] is None:
-                    line = Afp_toIntString(int(row[1]), 2) +  "% für die Preisgruppe " + row[0] + " bei" + Afp_toString(row[2])
+                    line = Afp_toIntString(int(row[1]), 2) +  "% für die Preisgruppe " + row[0] + " ab" + Afp_toString(row[2])
                 else:
                     line = Afp_toIntString(int(row[1]), 2) +  "% für die Preisgruppe " + row[0]
             else:
+                den = "den"
+                if sel == "GlobSUR": den = "alle"
                 if len(row) > 2 and not row[2] is None:
-                    line = Afp_toIntString(int(row[1]), 2)  + "% für den Hersteller bei"  + Afp_toString(row[2])
+                    line = Afp_toIntString(int(row[1]), 2)  + "% für "+ den + " Hersteller ab"  + Afp_toString(row[2])
                 else:
-                    line = Afp_toIntString(int(row[1]), 2)  + "% für den Hersteller insgesamt"
+                    line = Afp_toIntString(int(row[1]), 2)  + "% für " + den + " Hersteller insgesamt"
             liste.append(line)
-        lst.Clear()
-        lst.InsertItems(liste, 0)
+        if lst:
+            lst.Clear()
+            lst.InsertItems(liste, 0)
+        else:
+            return liste
+    ## invoke dialog to set explicit discout or surcharge values
+    # @param table - selection table to be manipulated
+    # @param ind - index of row in seletion table
+    # @param glb - flag if global values should be manipulated
+    def invoke_list_entry_dialog(self, table, ind, glb = False):
+        changed = False
+        if table == "ARTDIS":
+            cols = "PreisGrp,Rabatt"
+            text = "   Rabatt"
+            header = "Hersteller Rabatt"
+            hsp = False
+        else:
+            cols = "PreisGrp,Handelsspanne,Value"
+            text = "   Handelsspannen"
+            header = "Verkauf Handelsspanne"
+            hsp = True
+        if glb:
+            header = "GLOBALE Handelsspanne"
+            herst = "ALLE Hersteller."
+            whole = "ALLE Artikel."
+            hersnr = 0
+        else:
+            her = self.data.get_string_value("Hersteller.ARTHERS")
+            if not her:  her =  self.text_Name.GetValue()
+            herst = "den Hersteller '" + her + "'."
+            whole = "den gesamten Hersteller."
+            hersnr = self.data.get_value("HersNr.ARTHERS")
+        if ind < 0:
+            if hsp: row = ["", 0, ""]
+            else: row = ["", 0]
+        else:
+            row = self.data.get_value_rows(table, cols, ind)[0]
+        print ("AfpDialog_FaManufact.invoke_list_entry_dialog entry:", row)
+        liste = [["Preisgruppe", Afp_toString(row[0])]]
+        if hsp:
+            liste.append(["Handelsspanne", Afp_toString(int(row[1]))])
+            liste.append(["Wert", Afp_toString(row[2])])
+        else:
+            liste.append(["Rabatt", Afp_toString(int(row[1]))])
+        res = AfpReq_MultiLine( text + "eingabe für " + herst, "   Eingaben ohne Preisgruppe gelten für " + whole , "Text", liste, header, 250, "")
+        print ("AfpDialog_FaManufact.invoke_list_entry_dialog res:", res, self.changed)
+        if res:
+            newdata = {}
+            if not hersnr is None: newdata["HersNr"] = hersnr
+            if res[0] != row[0]:
+                if res[0]:
+                    newdata["PreisGrp"]  = res[0]
+                else:
+                    newdata["PreisGrp"]  = None
+            if Afp_isEps(row[1] - Afp_numericString(res[1])):
+                if hsp: newdata["Handelsspanne"] = Afp_numericString(res[1])
+                else: newdata["Rabatt"] = Afp_numericString(res[1])
+            if hsp and res[2] and (not row[2] or Afp_isEps(row[2] - Afp_numericString(res[2]))):
+                newdata["Value"] = Afp_numericString(res[2])
+            if newdata:
+                print ("AfpDialog_FaManufact.invoke_list_entry_dialog new:",  newdata)
+                self.data.set_data_values(newdata, table, ind)
+                changed = True
+        elif res is None and ind > -1:
+            self.data.delete_row(table, ind)
+            changed = True
+        return changed
     
     ## check if manufacturer identifer is unique
     def check_unique(self):
@@ -1623,55 +1700,14 @@ class AfpDialog_FaManufact(AfpDialog):
         hsp = event.GetEventObject().GetName() == "Liste_Verkauf"
         if hsp:
             table = "ARTSUR"
-            cols = "PreisGrp,Handelsspanne,Value"
-            text = "   Handelsspannen"
-            header = "Verkauf Handelsspanne"
         else:
             table = "ARTDIS"
-            cols = "PreisGrp,Rabatt"
-            text = "   Rabatt"
-            header = "Hersteller Rabatt"
         ind = event.GetInt() -1 
-        print ("AfpDialog_FaManufact.On_DClick ind:", ind, table, cols)
-        if ind < 0:
-            if hsp: row = ["", 0, ""]
-            else: row = ["", 0]
-        else:
-            row = self.data.get_value_rows(table, cols, ind)[0]
-        print ("AfpDialog_FaManufact.On_DClick entry:", row)
-        liste = [["Preisgruppe", Afp_toString(row[0])]]
-        if hsp:
-            liste.append(["Handelsspanne", Afp_toString(int(row[1]))])
-            liste.append(["Wert", Afp_toString(row[2])])
-        else:
-            liste.append(["Rabatt", Afp_toString(int(row[1]))])
-        hersnr = self.data.get_value("HersNr.ARTHERS")
-        herst = self.data.get_string_value("Hersteller.ARTHERS")
-        if not herst: herst =  self.text_Name.GetValue() 
-        res = AfpReq_MultiLine( text + "eingabe für den Hersteller '" + herst + "'.","   Eingaben ohne Preisgruppe gelten für den gesamten Hersteller." , "Text", liste, header, 250, "")
-        print ("AfpDialog_FaManufact.On_DClick res:", res, self.changed)
-        if res:
-            newdata = {}
-            if hersnr: newdata["HersNr"] = hersnr
-            if res[0] != row[0]:
-                if res[0]: 
-                    newdata["PreisGrp"]  = res[0]
-                else:
-                    newdata["PreisGrp"]  = None
-            if Afp_isEps(row[1] - Afp_numericString(res[1])):
-                if hsp: newdata["Handelsspanne"] = Afp_numericString(res[1])
-                else: newdata["Rabatt"] = Afp_numericString(res[1])
-            if hsp and res[2] and (not row[2] or Afp_isEps(row[2] - Afp_numericString(res[2]))):
-                newdata["Value"] = Afp_numericString(res[2])
-            if newdata:   
-                print ("AfpDialog_FaManufact.On_DClick new:",  newdata)
-                self.data.set_data_values(newdata, table, ind)
-                self.changed = True
-        elif res is None and ind > -1:
-            self.data.delete_row(table, ind)
-            self.changed = True
+        changed = self.invoke_list_entry_dialog(table, ind)
+        if changed: self.changed = True
         if hsp: self.Pop_Liste_Verkauf()
         else: self.Pop_Liste_Einkauf()
+
     # Button events
     ## create new manufacturer
     def On_Neu(self, event):
@@ -1679,7 +1715,7 @@ class AfpDialog_FaManufact(AfpDialog):
         data = AfpManufact(self.data.get_globals())
         #print ("AfpDialog_FaManufact.On_Neu data:", data) 
         self.attach_data( data, True, True)
-    ## attach address to this manzfacturer
+    ## attach address to this manufacturer
     def On_Adresse(self, event):
         if self.debug: print ("AfpDialog_FaManufact.On_Adresse")
         herst = self.data.get_string_value("Hersteller")
@@ -1693,6 +1729,19 @@ class AfpDialog_FaManufact(AfpDialog):
             self.data.delete_selection("ADRESSE")
             self.changed = True
             self.Pop_Adresse()
+    ## set global surcharge values for all manufacturers
+    def On_Global(self, event):
+        ok = True
+        while ok:
+            liste = self.populate_list("GlobSUR")
+            row, ok = AfpReq_Selection("Bitte globalen Handelsspanneneintrag auswählen,", "der bearbeitet werden soll.", liste, "GLOBALE Handelsspanne")
+            print ("AfpDialog_FaManufact.On_Global:", row, ok)
+            if ok:
+                ind = liste.index(row) - 1
+                changed = self.invoke_list_entry_dialog("GlobSUR", ind, True)
+                if changed:
+                    self.changed = True
+                    self.Set_Editable(True)
 
 ## loader routine for dialog for editing and maintaining manufacturers, returns Ok flag 
 # @param globals - global values including the mysql connection - this input is mandatory
