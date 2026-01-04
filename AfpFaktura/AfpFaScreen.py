@@ -44,7 +44,7 @@ from AfpBase.AfpBaseAdRoutines import AfpAdresse_StatusMap, AfpAdresse
 from AfpBase.AfpBaseAdDialog import AfpLoad_DiAdEin_fromKNr, AfpLoad_AdAusw, AfpAdresse_indirectAttributFromKNr
 from AfpBase.AfpBaseFiDialog import AfpLoad_DiFiZahl, AfpLoad_SimpleInvoice
 
-from AfpFaktura.AfpFaRoutines import AfpFaktura_FilterList, AfpArtikel, AfpInvoice, AfpOffer, AfpOrder, AfpFaktura_inFilterList, AfpFaktura_changeKind, AfpFaktura_possibleKinds, AfpFaktura_colonFloat, AfpFaktura_colonInt
+from AfpFaktura.AfpFaRoutines import AfpFaktura_FilterList, AfpArtikel, AfpInvoice, AfpOffer, AfpOrder, AfpFaktura_inFilterList, AfpFaktura_changeKind, AfpFaktura_possibleKinds, AfpFaktura_identifyIndex, AfpFaktura_colonFloat, AfpFaktura_colonInt
 from AfpFaktura.AfpFaDialog import AfpLoad_FaAusw, AfpLoad_FaCustomSelect, AfpLoad_FaLine, AfpLoad_FaArtikelAusw, AfpReq_FaSelectedRow, AfpFaktura_selectManufacturer, AfpLoad_FaManufact
 
 class AfpFaScreen_EditLinePlugIn(object):
@@ -393,6 +393,7 @@ class AfpFaScreen(AfpEditScreen):
         self.dynamic_grid_col_labels = self.grid_col_labels[0]
 
         self.content_colname = ["Pos","ErsatzteilNr","Bezeichnung","Anzahl","Einzel","Gesamt"]
+        self.midentlen = None
         self.selected_row = None
         self.index = None
         self.index_nr = None
@@ -965,12 +966,12 @@ class AfpFaScreen(AfpEditScreen):
     ## edit a grid line
     # @param typ - typ of line editing, valid types: None - choose, free - free artcle entry, stock - enter stock receipt
     # @param value - value(s) to be inserted
-    # @param index - sortindex in database table
     # @param rowNr - number of row to be edited
-    def edit_line(self, typ, value, index, rowNr):
+    def edit_line(self, typ, value, rowNr):
         #print("AfpFaScreen.edit_line:", value, index, rowNr)
         if typ is None:
             #self.sb.set_debug()
+            index = AfpFaktura_identifyIndex(value, self.midentlen)
             self.sb.CurrentIndexName(index, "ARTIKEL")
             self.sb.select_key(value)
             param = None
@@ -1277,16 +1278,16 @@ class AfpFaScreen(AfpEditScreen):
                             if action[0]: text[0] = action[0]
                         elif action[1] == "frei":
                             #print("AfpFaScreen.edit_data frei:", action)
-                            self.edit_line("free", action[0], None, rowNr)
+                            self.edit_line("free", action[0], rowNr)
                         else:
-                            self.edit_line(None, action[0], action[1], rowNr)
+                            self.edit_line(None, action[0], rowNr)
                     else:
                         if action: 
                             ident = action
                             ask = False
                         dlgres = AfpLoad_FaArtikelAusw(self.globals, "ArtikelNr", ident, "ARTIKEL", None, ask)
                         if dlgres:
-                            self.edit_line(None, dlgres, "ArtikelNr", rowNr)
+                            self.edit_line(None, dlgres, rowNr)
             else:
                 if text[0]:
                     edit_text = True
@@ -1464,6 +1465,7 @@ class AfpFaScreen(AfpEditScreen):
     #overwritten from AfpScreen) 
     # @param origin - string where to find initial data
     def set_initial_record(self, origin = None):
+        self.midentlen = self.globals.get_value("short-manu-max-len", "Faktura")
         ReNr = 0
         if origin == "Charter":
             ReNr = self.sb.get_value("RechNr.FAHRTEN")

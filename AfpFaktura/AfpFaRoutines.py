@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-## @package AfpInvoice.AfpInRoutines
+## @package AfpFaktura.AfpFaRoutines
 # AfpInRoutines module provides classes and routines needed for invoice handling,\n
 # no display and user interaction in this modul.
 #
@@ -31,6 +31,7 @@
 
 from AfpBase.AfpDatabase.AfpSQL import AfpSQLTableSelection
 from AfpBase.AfpUtilities.AfpBaseUtilities import Afp_getNow
+from AfpBase.AfpUtilities.AfpStringUtilities import *
 from AfpBase.AfpBaseRoutines import *
 from AfpBase.AfpSelectionLists import AfpSelectionList, AfpPaymentList
 #from AfpBase.AfpBaseAdRoutines import AfpAdresse, AfpAdresse_getListOfTable
@@ -159,16 +160,31 @@ def AfpFaktura_isWage(id_string):
     else:
         return False
 ## extract manufacturer short name from article-number string
-# @param globals - global data
+# @param mlen - maximal length of manufacturer identifier
 # @param number - identifier string to be tested
-def AfpFaktura_getShortManu(globals, number):
-    ken = number.split(" ")[0]
-    mlen = globals.get_value("short-manu-max-len", "Faktura")
+def AfpFaktura_getShortManu(number, mlen = 2):
     if not mlen: mlen = 2
+    ken = number.split(" ")[0]
     if len(ken) <= mlen:
         return ken
     else:
         return None
+## identify index from input string
+# @param string - string to be analysed
+# @param mlen - maximal length of manufacturer identifier
+def AfpFaktura_identifyIndex(string, mlen = 2):
+    if not string: return "ArtikelNr"
+    direct = False
+    if string[0] == "!":
+        string = string[1:]
+        direct = True
+    if AfpFaktura_getShortManu(string, mlen) or direct:
+        index = "ArtikelNr"
+    elif Afp_isEAN(string):
+        index = "EAN"
+    else:
+        index = "Bezeichnung"
+    return index
 ## special handling for float string prepended by a colon endend string
 # @param string - string to be converted
 def AfpFaktura_colonFloat(string):
@@ -457,7 +473,9 @@ class AfpManufact(AfpSelectionList):
         check.load_data("HersNr = " + self.get_string_value("HersNr") + " AND ArtikelNr = '" + anumber + "'") 
         #print("AfpManufact.get_articles check:", check.data)
         if check.get_data_length() == 0:
-            data = {"ArtikelNr": self.get_value("Kennung") + " " + sel.get_value("ArtikelNr"), "Bezeichnung": sel.get_value("Bezeichnung"), "Listenpreis": sel.get_value("Listenpreis"), "PreisGrp": sel.get_value("PreisGrp"), "HersNr": self.get_value("HersNr"), "EAN": sel.get_value("EAN")}
+            ean = sel.get_value("EAN")
+            if ean: ean = Afp_toEANString(ean)
+            data = {"ArtikelNr": self.get_value("Kennung") + " " + sel.get_value("ArtikelNr"), "Bezeichnung": sel.get_value("Bezeichnung"), "Listenpreis": sel.get_value("Listenpreis"), "PreisGrp": sel.get_value("PreisGrp"), "HersNr": self.get_value("HersNr"), "EAN": ean}
             #print("AfpManufact.get_articles data:", data)
             article = AfpArtikel(self.globals, None)
             article.set_data_values(data)

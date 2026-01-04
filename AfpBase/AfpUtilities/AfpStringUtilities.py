@@ -188,6 +188,20 @@ def Afp_toMonthString(nr):
     elif nr == 11: return "November"
     elif nr == 12: return "Dezember"
     return ""
+## complete ean 13 string
+# @param string - string to be completed
+def Afp_toEANString(string):
+    ean = None
+    lgh = len(string)
+    if lgh > 12:
+        ean = string
+    else:
+        if lgh < 12:
+            for i in range(lgh,12):
+                string += "0"
+        diff = Afp_genEANCeckDigit(string)
+        ean = string + Afp_toString(diff)
+    return ean
 ## analyse string and create data from it
 # @param string - string to be converted
 # - "xx.xx" or "xx,xx" -> float (x - digit)
@@ -581,12 +595,7 @@ def Afp_isEAN(ean):
     lgh = len(ean)
     sum = 0
     if lgh == 13:
-        fac = 3
-        for i in range(lgh-1,-1,-1):
-            sum += fac*int(ean[i])
-            if fac == 3: fac = 1
-            else: fac = 3
-        diff = int(sum/10)*10 + 10 - sum
+        diff = Afp_genEANCeckDigit(ean[:-1])
         if diff == int(ean[-1]): isEan = True
     return isEan
 ## flag if string may represent a numeric value
@@ -755,7 +764,21 @@ def Afp_mapIChar(char):
         return Afp_toString(val)
     else:
         return "XX"
-    
+## generate the ean check digit for input string
+# @param strg - string for which check digit has to be created
+def Afp_genEANCeckDigit(strg):
+    lgh = len(strg)
+    sum = 0
+    fac = 3
+    for i in range(lgh-1,-1,-1):
+        sum += fac*int(strg[i])
+        if fac == 3: fac = 1
+        else: fac = 3
+    cd = int(sum/10)*10 + 10 - sum
+    if cd > 9: cd -= 10
+    #print ("Afp_genEANCeckDigit:", cd, sum)
+    return cd
+
 ## extract word from string which include special phrases
 # @param in_string - string to be analysed
 # @param including - string to included in word

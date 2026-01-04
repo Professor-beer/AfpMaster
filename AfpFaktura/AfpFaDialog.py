@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-## @package AfpInvoice.AfpInDialog
+## @package AfpFaktura.AfpFaDialog
 # AfpInDialog module provides the dialogs and appropriate loader routines needed for invoicehandling
 #
 #   History: \n
@@ -215,7 +215,7 @@ class AfpDialog_FaArtikelAusw(AfpDialog_Auswahl):
     ## invoke the dialog for a new entry \n
     # overwritten for "Artikel" use
     def invoke_neu_dialog(self, globals, eingabe, filter):
-        ken = AfpFaktura_getShortManu(globals, eingabe)
+        ken = AfpFaktura_getShortManu(eingabe, globals.get_value("short-manu-max-len", "Faktura"))
         if ken:
             einhers = "!" + eingabe[len(ken) + 1:]
         else:
@@ -318,19 +318,11 @@ def AfpLoad_FaArtikelAusw(globals, index, value = "", datei = "ARTIKEL", where =
     if ask:
         if not value: value = ""
         value, Ok = AfpReq_Text("Bitte Suchbegriff für Artikelauswahl eingeben:", "", value, "Artikelauswahl")
-    else:
-        if len(value) and value[0] == "!":
-            value = value[1:]
-            direct = True
     if Ok and value:
-        if AfpFaktura_getShortManu(globals, value) or direct:
-            index = "ArtikelNr"
-            #Ok = None
-        elif Afp_isEAN(value):
-            index = "EAN"
+        if value[0] == "!":  direct = True
+        index = AfpFaktura_identifyIndex(value, globals.get_value("short-manu-max-len", "Faktura"))
+        if index == "EAN" or (direct and index == "ArtikelNr") :
             Ok = None
-        else:
-            index = "Bezeichnung"
     #print("AfpLoad_FaArtikelAusw index:", index, value, Ok)
     if Ok:
         if datei == "ARTIKEL" or datei == "Artikel":
@@ -694,10 +686,9 @@ class AfpDialog_FaLine(AfpDialog):
         self.label_TArtikelt = wx.StaticText(panel, -1, label="Artikelauswahl", pos=(10,10), size=(160,20), name="TArtikel")
         self.text = wx.TextCtrl(panel, -1, value="", pos=(10,30), size=(180,22), style=0, name="Text")
         
-        self.radio_Artikel = wx.RadioButton(panel, -1,  label = "Artikel &Nr.", pos=(10,55), size=(120,20),  style=wx.RB_GROUP,  name="RArtikel") 
-        self.radio_Bez = wx.RadioButton(panel, -1,  label = "&Bezeichnung", pos=(10,75), size=(120,20),  name="RBez") 
-        self.radio_Ohne = wx.RadioButton(panel, -1,  label = "&ohne Artikelnummer", pos=(10,95), size=(180,20),  name="ROhne") 
-        self.radio_Text = wx.RadioButton(panel, -1,  label = "&Text", pos=(10,115), size=(180,20),  name="RText") 
+        self.radio_Artikel = wx.RadioButton(panel, -1,  label = "Artikel", pos=(10,55), size=(120,20),  style=wx.RB_GROUP,  name="RArtikel") 
+        self.radio_Ohne = wx.RadioButton(panel, -1,  label = "&ohne Artikelnummer", pos=(10,75), size=(180,20),  name="ROhne") 
+        self.radio_Text = wx.RadioButton(panel, -1,  label = "&Text", pos=(10,95), size=(180,20),  name="RText") 
  
         self.button_Ausw= wx.Button(panel, -1, label="&Auswahl", pos=(200,10), size=(70,35), name="BAusw")
         self.Bind(wx.EVT_BUTTON, self.On_Ausw, self.button_Ausw)
@@ -723,8 +714,7 @@ class AfpDialog_FaLine(AfpDialog):
     ## get radio selection 
     def get_radio_value(self):
         label = ""
-        if self.radio_Artikel.GetValue(): label = "ArtikelNr"
-        elif self.radio_Bez.GetValue(): label = "Bezeichnung"
+        if self.radio_Artikel.GetValue(): label = "Artikel"
         elif self.radio_Ohne.GetValue(): label = "frei"
         elif self.radio_Text.GetValue(): label = "Text"
         return label
@@ -783,6 +773,7 @@ class AfpDialog_FaArticle(AfpDialog):
         AfpDialog.__init__(self,None, -1, "")
         self.hersteller = None
         self.fix_hersteller = False
+        self.midentlen = None
         self.set_readonly = []
         self.preset =  {}
         self.presetedit = []
@@ -1166,6 +1157,7 @@ class AfpDialog_FaArticle(AfpDialog):
         if data.get_value("HersNr") and not self.fix_hersteller:
             self.hersteller = AfpManufact(data.get_globals(), data.get_value("HersNr"))
         super(AfpDialog_FaArticle, self).attach_data(data, new, editable)
+        self.midentlen = data.get_globals().get_value("short-manu-max-len", "Faktura")
         if new and data.get_value("ArtikelNr"):
             self.text_ArtikelNr.SetBackgroundColour(self.changecolor)
             self.changed = True
@@ -1196,7 +1188,7 @@ class AfpDialog_FaArticle(AfpDialog):
     # @param event - event which initiated this action
     def On_KillArtikel(self,event = None):
         artnr = self.text_ArtikelNr.GetValue().strip()
-        ken = AfpFaktura_getShortManu(self.data.get_globals(), artnr)
+        ken = AfpFaktura_getShortManu(artnr, self.midentlen)
         if self.hersteller.get_value("Kennung") != ken:
             if self.fix_hersteller:
                 if ken: artnr = artnr[len(ken):].strip()
@@ -1249,7 +1241,7 @@ class AfpDialog_FaArticle(AfpDialog):
             print("AfpDialog_FaArticle.On_Hersteller set:", ken)
             self.hersteller = AfpManufact(self.data.get_globals(), ken, "Kennung")
             artnr = self.text_ArtikelNr.GetValue().strip()
-            ken = AfpFaktura_getShortManu(self.data.get_globals(), artnr)
+            ken = AfpFaktura_getShortManu(artnr, self.midentlen)
             if self.hersteller.get_value("Kennung") != ken:
                 if ken: artnr = artnr[len(ken):].strip()
                 artnr =  self.hersteller.get_value("Kennung") + " " + artnr
