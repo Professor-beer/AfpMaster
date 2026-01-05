@@ -30,7 +30,7 @@
 
 
 from AfpBase.AfpDatabase.AfpSQL import AfpSQLTableSelection
-from AfpBase.AfpUtilities.AfpBaseUtilities import Afp_getNow
+from AfpBase.AfpUtilities.AfpBaseUtilities import Afp_getNow, Afp_isNumeric
 from AfpBase.AfpUtilities.AfpStringUtilities import *
 from AfpBase.AfpBaseRoutines import *
 from AfpBase.AfpSelectionLists import AfpSelectionList, AfpPaymentList
@@ -697,6 +697,9 @@ class AfpFaktura(AfpPaymentList):
         if not self.get_value("Kontierung"):
             Konto = self.get_account_number()
             self.set_value("Kontierung",Konto)
+        for field in ("Rabatt", "Skonto", "Zahlung", "ZahlBetrag"):
+            if self.get_value(field) in ("", None):
+                self.set_value(field, 0.0)
     ## get accountnumber for financial accounting
     def get_account_number(self):
         if self.content_holds_wage():
@@ -1076,6 +1079,37 @@ class AfpInvoice(AfpFaktura):
         AfpFaktura.set_new(self, stype, KNr, keep)
         if KNr:
             self.set_value("Debitor", self.get_indi_account(KNr))
+    ## calculate external invoice number with configured start and prefix
+    def get_external_rechnr(self):
+        value = self.get_value("RechNr")
+        if not (value or value == 0):
+            return None
+        ext = value
+        start = self.globals.get_value("invoice-number-start", "Faktura")
+        if start:
+            start_nr = Afp_fromString(start)
+            if Afp_isNumeric(start_nr):
+                ext = start_nr + value - 1
+        prefix = self.globals.get_value("invoice-number-prefix", "Faktura")
+        if prefix:
+            return prefix + Afp_toString(ext)
+        return Afp_toString(ext)
+    ## get invoice number with configured prefix for output
+    def get_ausgabe_value(self, DateiFeld = None):
+        if DateiFeld and DateiFeld.split(".")[0] == "RechNrExtern":
+            ext = self.get_external_rechnr()
+            if ext:
+                return ext
+        return AfpSelectionList.get_ausgabe_value(self, DateiFeld)
+    ## get invoice number with configured prefix for display
+    def get_string_value(self, DateiFeld = None, quoted_string = False):
+        if quoted_string:
+            return AfpSelectionList.get_string_value(self, DateiFeld, quoted_string)
+        if DateiFeld and DateiFeld.split(".")[0] in ("RechNr", "RechNrExtern"):
+            ext = self.get_external_rechnr()
+            if ext:
+                return ext
+        return AfpSelectionList.get_string_value(self, DateiFeld, quoted_string)
     ## complete datavalues needed for storing
     def complete_data(self):
         #print("AfpInvoice.complete_data")
