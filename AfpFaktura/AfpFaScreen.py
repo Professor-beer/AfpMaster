@@ -1442,6 +1442,9 @@ class AfpFaScreen(AfpEditScreen):
         data = None
         value = self.combo_Filter.GetValue()
         datei, filter = AfpFaktura_possibleKinds(value)
+        saved_table = self.data.get_maintable()
+        saved_rech = self.data.get_value("RechNr")
+        saved_filter = self.data.get_value("Zustand")
         if datei != self.sb_master:
             # conversion necessary
             if datei == "RECHNG"and not self.data.get_value("TypNr"): 
@@ -1457,8 +1460,22 @@ class AfpFaScreen(AfpEditScreen):
                 data.set_value("Typ", datei)
                 data.set_value("TypNr", self.data.get_value())
                 data.store()
+        saved_table = self.data.get_maintable()
+        saved_rech = self.data.get_value("RechNr")
+        saved_filter = self.data.get_value("Zustand")
         #print ("AfpFaScreen.store_data Rechnung:", datei, self.data.get_listname())
         self.load_invoice()
+        if saved_rech:
+            self.sb_master = saved_table
+            self.sb.CurrentIndexName("RechNr", saved_table)
+            self.sb.select_key(saved_rech)
+            self.sb.CurrentFileName(saved_table)
+            if saved_filter:
+                name, index = AfpFaktura_possibleKinds(None, saved_table, saved_filter)
+                if not len(name): name = saved_table
+                self.combo_Filter.SetSelection(self.get_filter_index(name, index))
+            self.set_current_record()
+            self.Populate()
                 
     ## load simple invoice dialog
     def load_invoice(self):
