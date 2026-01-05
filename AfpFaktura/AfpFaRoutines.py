@@ -1018,7 +1018,7 @@ class AfpFaktura(AfpPaymentList):
                 typ = None
         if not typ:
             felder = self.selection_table.get_columns_for_line_display()
-            return  [ ["choose", felder], [3,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"]] 
+            return  [ ["choose", felder], [3,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"]] 
             #return  [ ["choose",",ArtikelNr,Bezeichnung,,Nettopreis,Nettopreis,Einkaufspreis"], [3,"Afp_intString","$5 = $5 * $3,$6 =( $4 - $6 )* $3"]] 
     ## return names of data columns neede for different grids
     # @param name - name of grid data is designed for
