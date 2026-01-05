@@ -1007,9 +1007,9 @@ class AfpFaktura(AfpPaymentList):
         if typ: 
             if typ == "free":
                 if param: 
-                    return  [ ["set",[2,param]], [3,"Afp_intString"], ["set",[4,"EK:"]], [4,"AfpFaktura_colonFloat","$6 = $4"], ["set",[4,""]], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"] ] 
+                    return  [ ["set",[2,param]], [3,"Afp_floatString"], ["set",[4,"EK:"]], [4,"AfpFaktura_colonFloat","$6 = $4"], ["set",[4,""]], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"] ] 
                 else:
-                   return  [ [2], [3,"Afp_intString"], ["set",[4,"EK:"]], [4,"AfpFaktura_colonFloat","$6 = $4"], ["set",[4,""]], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"] ] 
+                   return  [ [2], [3,"Afp_floatString"], ["set",[4,"EK:"]], [4,"AfpFaktura_colonFloat","$6 = $4"], ["set",[4,""]], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"] ] 
                 #return  [ ["set",",,"+ value + ",,,,"], [3,"Afp_intString"], [4,"Afp_floatString","$6 = $4"], [4,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"]] 
             elif typ == "stock":
                 # param = [requested, delivered]
@@ -1018,7 +1018,7 @@ class AfpFaktura(AfpPaymentList):
                 typ = None
         if not typ:
             felder = self.selection_table.get_columns_for_line_display()
-            return  [ ["choose", felder], [3,"Afp_intString","$5 = $5 * $3,$6 =( $4 - $6 )* $3"]] 
+            return  [ ["choose", felder], [3,"Afp_floatString","$5 = $4 * $3,$6 =( $4 - $6 )* $3"]] 
             #return  [ ["choose",",ArtikelNr,Bezeichnung,,Nettopreis,Nettopreis,Einkaufspreis"], [3,"Afp_intString","$5 = $5 * $3,$6 =( $4 - $6 )* $3"]] 
     ## return names of data columns neede for different grids
     # @param name - name of grid data is designed for
