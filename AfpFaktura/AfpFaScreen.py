@@ -1249,11 +1249,9 @@ class AfpFaScreen(AfpEditScreen):
         ReNr = data.get_value(self.index)
         if ReNr:
             filter = data.get_value("Zustand")
-            name, index = AfpFaktura_possibleKinds(None, self.sb_master, filter)
-            if not len(name): name = self.sb_master
             self.sb.CurrentIndexName("RechNr", self.sb_master)
             self.sb.select_key(ReNr)
-            self.combo_Filter.SetSelection(self.get_filter_index(name, index))
+            self.combo_Filter.SetSelection(self.get_filter_index(self.sb_master, filter))
             self.On_Sortierung()
         self.data = data
         self.Populate()
