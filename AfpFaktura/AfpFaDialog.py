@@ -370,6 +370,7 @@ class AfpDialog_FaCustomSelect(AfpDialog):
         self.cols = 4
         self.col_percents = [25, 15, 10, 50]
         self.ident = []
+        self._ctx_row = None
         AfpDialog.__init__(self,None, -1, "")
         self.SetSize((650,415))
         self.SetTitle("Schnellauswahl")
@@ -511,35 +512,104 @@ class AfpDialog_FaCustomSelect(AfpDialog):
                 self.data = data
                 self.Ok = True
                 self.EndModal(wx.ID_OK)
-    ## Eventhandler Grid RightClick - invoke memo edit
-    # @param event - event which initiated this action   
-    def On_RClick(self,event):
-        if self.debug: print("Event handler `AfpDialog_FaCustomSelect.On_RClick'")
-        ind = event.GetRow()
-        print("Event handler `AfpDialog_FaCustomSelect.On_RClick' not implemented!", ind)
-        if ind < len(self.ident):
-            RechNr = self.ident[ind]
+    
+    ## Eventhandler ContextMenu - edit comment
+    # @param event - event which initiated this action
+    def On_ContextComment(self, event):
+        if self.debug: print("Event handler `AfpDialog_FaCustomSelect.On_ContextComment'")
+        if self._ctx_row is None:
+            return
+        self._edit_comment(self._ctx_row)
+
+    ## Eventhandler ContextMenu - delete entry
+    # @param event - event which initiated this action
+    def On_ContextDelete(self, event):
+        if self.debug: print("Event handler `AfpDialog_FaCustomSelect.On_ContextDelete'")
+        if self._ctx_row is None:
+            return
+        self._delete_entry(self._ctx_row)
+
+    ## edit comment for a grid row
+    # @param row - row index
+    def _edit_comment(self, row):
+        if row < len(self.ident):
+            RechNr = self.ident[row]
             data = AfpFaktura_getSelectionList(self.globals, RechNr, self.datei)
-            name = data.get_name()
             if self.datei == "ADMEMO":
-                field = "Memo"
-                text = data.get_string_value(field)
-                mtext,ok = AfpReq_Text("Bitte den Memotext für", name + " eigeben!", text, "Memoeingabe")
+                name = data.get_name()
+                ok = AfpReq_Question("Soll das Memo von", name + " deaktiviert werden?", "Memo")
+                if ok:
+                    data.deactivate()
+                    self.Pop_Auswahl()
             else:
                 field = "Bem"
                 text = data.get_string_value(field)
                 if self.datei == "KVA":
                     vorgang = data.get_value("Zustand")
-                    if vorgang == "Angebot": vorgang = "das " +  vorgang
-                    else: vorgang = "den " +  vorgang
+                    if vorgang == "Angebot":
+                        vorgang = "das " + vorgang
+                    else:
+                        vorgang = "den " + vorgang
                 else:
                     vorgang = "die Rechnung"
                 vorgang += " Nr. " + data.get_string_value()
-                mtext,ok = AfpReq_Text("Bitte die Bemerkung für " + vorgang, "von " + name + " eigeben!", text, "Bemerkung")
-            if mtext and ok:
-                data.set_value(field, mtext)
+                mtext, ok = AfpReq_Text("Bitte die Bemerkung fuer " + vorgang, "von " + name + " eigeben!", text, "Bemerkung")
+                if mtext and ok:
+                    data.set_value(field, mtext)
+                    data.store()
+                    self.Pop_Auswahl()
+
+    ## delete entry for a grid row
+    # @param row - row index
+    def _delete_entry(self, row):
+        if row >= len(self.ident):
+            return
+        RechNr = self.ident[row]
+        data = AfpFaktura_getSelectionList(self.globals, RechNr, self.datei)
+        if self.datei == "ADMEMO":
+            name = data.get_name()
+            ok = AfpReq_Question("Soll das Memo von", name + " geloescht werden?", "Memo loeschen", True)
+            if ok:
+                data.delete_row(None, 0)
                 data.store()
                 self.Pop_Auswahl()
+            return
+        name = data.get_name()
+        kind = data.get_kind()
+        nummer = data.get_string_value()
+        text = kind + " Nr. " + nummer
+        ok = AfpReq_Question(text + " von", name + " wirklich komplett loeschen?", "Eintrag loeschen", True)
+        if not ok:
+            return
+        mysql = data.get_mysql()
+        main_table = data.get_maintable()
+        main_nr = Afp_toString(RechNr)
+        content = data.get_selection("Content", False)
+        if content:
+            ctable = content.tablename
+            mysql.execute("DELETE FROM " + ctable + " WHERE RechNr = " + main_nr)
+        mysql.execute("DELETE FROM ARCHIV WHERE Tab = " + Afp_toQuotedString(main_table) + " AND TabNr = " + main_nr)
+        mysql.execute("DELETE FROM " + main_table + " WHERE RechNr = " + main_nr)
+        self.Pop_Auswahl()
+
+    ## Eventhandler Grid RightClick - invoke memo edit
+    # @param event - event which initiated this action   
+    def On_RClick(self,event):
+        if self.debug: print("Event handler `AfpDialog_FaCustomSelect.On_RClick'")
+        ind = event.GetRow()
+        if ind >= len(self.ident):
+            event.Skip()
+            return
+        self._ctx_row = ind
+        menu = wx.Menu()
+        mid_comment = wx.NewId()
+        mid_delete = wx.NewId()
+        menu.Append(mid_comment, "Kommentar anlegen")
+        menu.Append(mid_delete, "Eintrag komplett loeschen")
+        self.Bind(wx.EVT_MENU, self.On_ContextComment, id=mid_comment)
+        self.Bind(wx.EVT_MENU, self.On_ContextDelete, id=mid_delete)
+        self.PopupMenu(menu)
+        menu.Destroy()
         event.Skip()
 
     ## Eventhandler CHOICE - invoke new choice display to grid
