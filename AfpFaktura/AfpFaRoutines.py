@@ -270,7 +270,15 @@ def AfpFaktura_importArtikels(globals, data, filename, paras, debug = False, pro
         sel.store()
         update_fields = ["Bezeichnung", "Listenpreis", "PreisGrp", "EAN"]
         set_clause = ",".join(["a." + f + " = m." + f for f in update_fields])
-        update = "UPDATE " + mysql.get_dbname("ARTIKEL") + " a JOIN " + mysql.get_dbname(mantable_db) + " m ON a.ArtikelNr = m.ArtikelNr SET " + set_clause
+        kennung = data.get_string_value("Kennung")
+        hersnr = data.get_string_value("HersNr")
+        if kennung:
+            match = "a.ArtikelNr = CONCAT('" + kennung + " ', m.ArtikelNr)"
+        else:
+            match = "a.ArtikelNr = m.ArtikelNr"
+        update = "UPDATE " + mysql.get_dbname("ARTIKEL") + " a JOIN " + mysql.get_dbname(mantable_db) + " m ON " + match + " SET " + set_clause
+        if hersnr:
+            update += " WHERE a.HersNr = " + hersnr
         if debug: print("AfpFaktura_importArtikels update ARTIKEL:", update)
         mysql.execute(update)
     if debug: print ("AfpFaktura_importArtikels stored:", Afp_getNow().time())
