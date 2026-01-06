@@ -366,6 +366,8 @@ class AfpManufact(AfpSelectionList):
     # @param article -  AfpArtikel SelectionList
     def gen_discount(self, article):
         lstp = article.get_value("Listenpreis")
+        if lstp is None:
+            lstp = 0.0
         prsgrp = article.get_value("PreisGrp")
         #print("AfpManufact.gen_discount:", lstp, prsgrp)
         disc = self.get_discount(prsgrp)
