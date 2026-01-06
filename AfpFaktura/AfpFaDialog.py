@@ -238,6 +238,8 @@ class AfpDialog_FaArtikelAusw(AfpDialog_Auswahl):
             if hers.get_value("Import"):
                 newarticle = AfpLoad_FaArtikelAusw(self.globals, "ArtikelNr", einhers, hers.get_manufact_table(), None, False, hers)
             if newarticle:
+                if Afp_isString(newarticle):
+                    newarticle = AfpArtikel(self.globals, newarticle)
                 ok = AfpLoad_FaArticle(newarticle, True)
                 if ok:
                     newarticle.store()
