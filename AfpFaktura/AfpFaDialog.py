@@ -1144,7 +1144,7 @@ class AfpDialog_FaArticle(AfpDialog):
         if "Einkaufspreis" in data or "Hsp" in data:
             data["Nettopreis"] = self.text_Preis.GetValue()
         if self.new and self.hersteller and not "HersNr" in data:
-            data["HersNr"] = self.hersteller.get_value()
+            data["HersNr"] = self.hersteller.get_value("HersNr")
         return data
     ## attaches data to this dialog, invokes population of widgets, overwritten from AfpDialog
     # @param data - AfpSelectionList which holds data to be filled into dialog wodgets
