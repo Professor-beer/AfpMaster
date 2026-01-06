@@ -660,6 +660,10 @@ def Afp_selectGetValue(mysql, table, column, index, value):
     string = Afp_toInternDateString(value)
     if Afp_isString(value) and not Afp_isNumeric(Afp_fromString(value)):
         string = Afp_toQuotedString(value)
+    rows = mysql.select(column, index + " = " + string, table, index, "0,1")
+    if rows:
+        if rows[0]:
+            return rows[0][0]
     rows = mysql.select(column, index + " >= " + string, table, index, "0,1")
     if rows:
         if rows[0]:
