@@ -529,6 +529,34 @@ class AfpDialog_FaCustomSelect(AfpDialog):
             return
         self._delete_entry(self._ctx_row)
 
+    
+    ## Eventhandler ContextMenu - mark entry as paid
+    # @param event - event which initiated this action
+    def On_ContextPaid(self, event):
+        if self.debug: print("Event handler `AfpDialog_FaCustomSelect.On_ContextPaid'")
+        if self._ctx_row is None:
+            return
+        self._mark_paid(self._ctx_row)
+
+    ## mark entry as paid
+    # @param row - row index
+    def _mark_paid(self, row):
+        if row >= len(self.ident):
+            return
+        if self.datei == "ADMEMO":
+            return
+        RechNr = self.ident[row]
+        data = AfpFaktura_getSelectionList(self.globals, RechNr, self.datei)
+        amount = data.get_value("ZahlBetrag")
+        if amount is None:
+            amount = data.get_value("Betrag")
+        if amount is None:
+            AfpReq_Info("Kein Betrag gefunden.", "Zahlung kann nicht gesetzt werden!")
+            return
+        data.set_payment_values(amount, data.get_globals().today())
+        data.store()
+        self.Pop_Auswahl()
+
     ## edit comment for a grid row
     # @param row - row index
     def _edit_comment(self, row):
@@ -606,6 +634,9 @@ class AfpDialog_FaCustomSelect(AfpDialog):
         mid_delete = wx.NewId()
         menu.Append(mid_comment, "Kommentar anlegen")
         menu.Append(mid_delete, "Eintrag komplett loeschen")
+        mid_paid = wx.NewId()
+        menu.Append(mid_paid, "Als bezahlt markieren")
+        self.Bind(wx.EVT_MENU, self.On_ContextPaid, id=mid_paid)
         self.Bind(wx.EVT_MENU, self.On_ContextComment, id=mid_comment)
         self.Bind(wx.EVT_MENU, self.On_ContextDelete, id=mid_delete)
         self.PopupMenu(menu)
