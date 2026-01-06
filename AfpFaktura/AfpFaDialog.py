@@ -349,7 +349,12 @@ def AfpLoad_FaArtikelAusw(globals, index, value = "", datei = "ARTIKEL", where =
             DiArtikel.Destroy()
     elif Ok is None:
         # flag for direct selection
-        result = Afp_selectGetValue(globals.get_mysql(), "ARTIKEL", "ArtikelNr", index, value)
+        if datei == "ARTIKEL" or datei == "Artikel":
+            result = Afp_selectGetValue(globals.get_mysql(), "ARTIKEL", "ArtikelNr", index, value)
+        else:
+            result = Afp_selectGetValue(globals.get_mysql(), datei, "ArtikelNr", index, value)
+            if result and manu:
+                result = manu.get_articles(result)
         #print result
     #globals.mysql.unset_debug()
     return result      
