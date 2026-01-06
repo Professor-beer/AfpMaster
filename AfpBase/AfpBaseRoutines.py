@@ -1056,6 +1056,7 @@ class AfpImport(object):
             if self.progress_bar:
                 self.progress_bar.plus_step()
             if new_data is None: continue  
+            new_data = [None if v == "" else v for v in new_data]
             mysql.write_insert(table, cols, [new_data])
     #
     # specific methods for xlsx import
