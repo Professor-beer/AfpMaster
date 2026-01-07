@@ -62,7 +62,9 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>. 
 #
 
+import base64
 import io
+import re
 import zipfile
 
 from . import AfpUtilities
@@ -369,6 +371,9 @@ class AfpAusgabe(object):
             #for ln in lines: line+= " " + ln.strip()
             for ln in lines: line+= ln
             #line = line.strip()
+        if "[GIROCODE]" in line:
+            self.tempfile.write(line)
+            return
         fields,netto = Afp_between(line, "[", "]")
         line = self.concat_line(fields, netto)
         #if self.debug: print "AfpAusgabe.write_line:", line
@@ -407,12 +412,121 @@ class AfpAusgabe(object):
             return escape(value)
         except Exception:
             return value
+    ## build EPC Girocode payload from current data and output content
+    # @param content - inflated template content
+    def build_girocode_payload(self, content):
+        def strip_xml(text):
+            text = re.sub(r"<[^>]+>", "", text)
+            text = text.replace("&nbsp;", " ")
+            return text
+        name = "Frank Hagendorn"
+        iban = None
+        if content:
+            match = re.search(r"IBAN:\s*([A-Z0-9 ]{10,})", content)
+            if match:
+                iban = match.group(1).replace(" ", "")
+            if not iban:
+                plain = strip_xml(content)
+                match = re.search(r"IBAN:\s*([A-Z0-9 ]{10,})", plain)
+                if match:
+                    iban = match.group(1).replace(" ", "")
+        if not iban:
+            return None
+        amount = self.retrieve_value("Betrag.Main")
+        if amount is None:
+            if content:
+                plain = strip_xml(content)
+                match = re.search(r"Gesamtbetrag Brutto\s*([0-9]+[\\.,][0-9]{2})", plain)
+                if match:
+                    amount = match.group(1)
+            if amount is None:
+                return None
+        if Afp_isString(amount):
+            amount = Afp_fromString(amount)
+        try:
+            amount = float(amount)
+        except Exception:
+            return None
+        amount_string = "EUR%.2f" % amount
+        reference = self.retrieve_value("RechNrExtern.Main")
+        if not reference:
+            reference = self.retrieve_value("RechNr.Main")
+        if not reference and content:
+            plain = strip_xml(content)
+            match = re.search(r"Rechnungs-Nr:\s*([A-Za-z0-9-]+)", plain)
+            if match:
+                reference = match.group(1)
+        if reference is None:
+            reference = ""
+        payload = [
+            "BCD",
+            "001",
+            "1",
+            "SCT",
+            "",
+            name,
+            iban,
+            amount_string,
+            "",
+            Afp_toString(reference),
+            ""
+        ]
+        return "\n".join(payload)
+    ## create base64 encoded PNG for Girocode
+    # @param payload - EPC Girocode payload string
+    def girocode_png_base64(self, payload):
+        try:
+            import qrcode
+        except Exception:
+            return None
+        try:
+            qr = qrcode.QRCode(
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=4,
+                border=2
+            )
+            qr.add_data(payload)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            return base64.b64encode(buffer.getvalue()).decode("ascii")
+        except Exception:
+            return None
+    ## inject Girocode image XML into inflated content
+    # @param content - inflated template content
+    def inject_girocode(self, content):
+        if not content or "[GIROCODE]" not in content:
+            return content
+        payload = self.build_girocode_payload(content)
+        if not payload:
+            content = re.sub(r"<text:p[^>]*>\s*\[GIROCODE\]\s*</text:p>", "", content, count=1)
+            return content.replace("[GIROCODE]", "")
+        image_b64 = self.girocode_png_base64(payload)
+        if not image_b64:
+            content = re.sub(r"<text:p[^>]*>\s*\[GIROCODE\]\s*</text:p>", "", content, count=1)
+            return content.replace("[GIROCODE]", "")
+        frame = (
+            '<text:p text:style-name="P36">'
+            '<draw:frame draw:style-name="fr1" draw:name="Girocode" '
+            'text:anchor-type="paragraph" svg:width="3cm" svg:height="3cm" '
+            'draw:z-index="0">'
+            '<draw:image draw:mime-type="image/png">'
+            '<office:binary-data>{b64}</office:binary-data>'
+            '</draw:image></draw:frame></text:p>'
+            '<text:p text:style-name="P36">Girocode</text:p>'
+        ).format(b64=image_b64)
+        if re.search(r"<text:p[^>]*>\s*\[GIROCODE\]\s*</text:p>", content):
+            return re.sub(r"<text:p[^>]*>\s*\[GIROCODE\]\s*</text:p>", frame, content, count=1)
+        return content.replace("[GIROCODE]", frame)
     ## generate the values stated in []-phrases \n
     # fields, variables, list of fields are handled here \n
     # function and fromula evaluation is deligated \n
     # value output is a string
     # @param fields - variables to be replaced by data-values
     def gen_value(self, fields):
+        if fields.strip().upper() == "GIROCODE":
+            return "[GIROCODE]"
         if "=" in fields:
             value = Afp_toString(self.gen_function(fields))
         elif "(" in fields and ")" in fields:
@@ -931,7 +1045,8 @@ class AfpAusgabe(object):
             # write plain file (fodt or xml)
             #fout = open(filename, 'w') 
             fout = open(filename, 'w', encoding='UTF-8') 
-            fout.write(self.tempfile.getvalue())
+            content = self.inject_girocode(self.tempfile.getvalue())
+            fout.write(content)
             fout.close()
         elif filename[-4:] == ".odt":
             # write zipped odt file
@@ -943,7 +1058,7 @@ class AfpAusgabe(object):
                 list = tmpl_file.infolist() 
                 for entry in list: 
                     if entry.filename == 'content.xml': 
-                       content = self.tempfile.getvalue()
+                       content = self.inject_girocode(self.tempfile.getvalue())
                        # ensure ODT content.xml uses the correct root element
                        if "<office:document" in content and "office:document-content" not in content:
                            content = content.replace("<office:document ", "<office:document-content ")
