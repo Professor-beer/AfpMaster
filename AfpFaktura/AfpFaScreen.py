@@ -796,6 +796,7 @@ class AfpFaScreen(AfpEditScreen):
             AfpReq_Info("Keine Sevdesk-Adresse konfiguriert.", "", "Sevdesk Versand")
             if event: event.Skip()
             return
+        templ = Afp_addRootpath(self.globals.get_value("templatedir"), "AfpMotor_template_Rechnung.fodt")
         fresult = self.create_invoice_output()
         if not fresult:
             AfpReq_Info("PDF konnte nicht erzeugt werden.", "", "Sevdesk Versand")
@@ -806,6 +807,7 @@ class AfpFaScreen(AfpEditScreen):
             AfpReq_Info("E-Mail Versand ist nicht konfiguriert.", "", "Sevdesk Versand")
             if event: event.Skip()
             return
+        mail.set_zugferd_data(self.data, templ)
         nummer = self.data.get_string_value("RechNrExtern")
         if not nummer:
             nummer = self.data.get_string_value("RechNr")

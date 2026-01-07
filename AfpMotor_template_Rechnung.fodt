@@ -702,6 +702,7 @@
       </table:table-cell>
       <table:table-cell table:style-name="Tabelle1.A1" office:value-type="string">
        <text:p text:style-name="P1">Steuer-Nr. <text:s text:c="6"/><text:span text:style-name="T1">03382430403</text:span></text:p>
+       <text:p text:style-name="P1">USt-IdNr: <text:span text:style-name="T1">DE355332145</text:span></text:p>
       </table:table-cell>
       <table:table-cell table:style-name="Tabelle1.A1" office:value-type="string">
        <text:p text:style-name="P1">Volksbank Odenwald</text:p>

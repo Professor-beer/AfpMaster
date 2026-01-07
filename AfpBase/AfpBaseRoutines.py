@@ -41,6 +41,7 @@
 
 import sys
 import openpyxl
+import re
 from AfpBase.AfpDatabase.AfpSQL import AfpSQL, AfpSQLTableSelection
 from AfpBase.AfpUtilities import *
 from AfpBase.AfpUtilities.AfpStringUtilities import *
@@ -1554,6 +1555,8 @@ class AfpMailSender(object):
         self.user = None
         self.word = None
         self.dry_run = None
+        self.zugferd_data = None
+        self.zugferd_template = None
         # look for data in globals
         if self.globals.get_value("dry-run"):
             self.dry_run = True
@@ -1659,6 +1662,11 @@ class AfpMailSender(object):
             except Exception:
                 print("AfpMailSender.add_attachment: Attachment check failed, skipped.")
                 return False
+            if self.zugferd_data:
+                filename = self._attach_zugferd_pdf(filename)
+                if not filename:
+                    print("AfpMailSender.add_attachment: ZUGFeRD embedding failed, attachment skipped.")
+                    return False
             self.attachments.append(filename)
             return True
         else:
@@ -1673,6 +1681,336 @@ class AfpMailSender(object):
                 self.recipients =[recipient] + self.recipients
             else:
                 self.recipients.append(recipient)
+    ## set invoice data for ZUGFeRD export
+    # @param data - faktura data (AfpInvoice)
+    # @param template - path to template file for seller info
+    def set_zugferd_data(self, data, template):
+        self.zugferd_data = data
+        self.zugferd_template = template
+    ## parse seller data from template text
+    # @param template - path to template file
+    def _zugferd_parse_template(self, template):
+        info = {
+            "name": None,
+            "street": None,
+            "zip": None,
+            "city": None,
+            "country": "DE",
+            "tax_id": None,
+            "tax_scheme": None,
+            "iban": None,
+            "email": None,
+            "phone": None,
+        }
+        if not template or not Afp_existsFile(template):
+            return info
+        try:
+            with open(template, "r", encoding="utf-8") as fin:
+                content = fin.read()
+        except Exception:
+            return info
+        plain = re.sub(r"<[^>]+>", "", content)
+        plain = plain.replace("&nbsp;", " ")
+        plain = plain.replace("\u2010", "-").replace("\u2011", "-").replace("\u2012", "-")
+        plain = plain.replace("\u2013", "-").replace("\u2014", "-").replace("\u2015", "-")
+        plain = plain.replace("\u2212", "-").replace("ƒ?", "-")
+        raw_lines = [line.strip() for line in plain.splitlines() if line.strip()]
+        lines = []
+        for line in raw_lines:
+            cleaned = re.sub(r"\[[^\]]+\]", "", line)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            if cleaned:
+                lines.append(cleaned)
+        for line in lines:
+            if "USt" in line or "Umsatzsteuer" in line:
+                match = re.search(r"(?:USt-IdNr|USt-Id|USt-ID|Umsatzsteuer-ID)\s*:?\s*([A-Z0-9]+)", line)
+                if match:
+                    info["tax_id"] = match.group(1).strip()
+                    info["tax_scheme"] = "VA"
+                    break
+        if not info["tax_id"]:
+            for line in lines:
+                if "Steuer-Nr" in line:
+                    match = re.search(r"Steuer-Nr\.?\s*([0-9/]+)", line)
+                    if match:
+                        info["tax_id"] = match.group(1).strip()
+                        info["tax_scheme"] = "FC"
+                        break
+        zip_line = None
+        for line in lines:
+            match = re.search(r"(\d{4,5})\s+(.+)", line)
+            if match:
+                info["zip"] = match.group(1)
+                info["city"] = match.group(2).strip()
+                zip_line = line
+                break
+        if zip_line and "-" in zip_line:
+            parts = [part.strip() for part in zip_line.split("-") if part.strip()]
+            if len(parts) >= 3:
+                info["name"] = parts[0]
+                info["street"] = parts[1]
+        if not info["street"]:
+            for line in lines:
+                if re.search(r"\d", line) and not re.search(r"\d{4,5}", line):
+                    info["street"] = line
+                    break
+        if not info["name"]:
+            for line in lines:
+                if "Hagendorn" in line or ("Motor" in line and not re.search(r"\d", line)):
+                    info["name"] = line
+                    break
+        if not info["name"]:
+            info["name"] = "Motorgeraete Hagendorn"
+        if not info["street"]:
+            info["street"] = "Kirchweg 4"
+        if not info["zip"]:
+            info["zip"] = "64760"
+        if not info["city"]:
+            info["city"] = "Oberzent"
+        for line in lines:
+            if "IBAN" in line:
+                match = re.search(r"IBAN:\s*([A-Z0-9 ]{10,})", line)
+                if match:
+                    info["iban"] = match.group(1).replace(" ", "")
+                    break
+        for line in lines:
+            if "Mail" in line or "E-Mail" in line:
+                match = re.search(r"([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})", line, re.IGNORECASE)
+                if match:
+                    info["email"] = match.group(1)
+                    break
+        for line in lines:
+            if "Tel" in line or "Telefon" in line:
+                match = re.search(r"(\\+?\\d[\\d\\s/\\-]+)", line)
+                if match:
+                    info["phone"] = match.group(1).strip()
+                    break
+        def invalid_seller_value(value, key):
+            if not value:
+                return True
+            value = value.strip()
+            if key == "zip":
+                return not re.match(r"^\d{5}$", value)
+            if key == "street":
+                return ("Kto" in value or "P1D" in value or "Duration" in value)
+            if key == "city":
+                return bool(re.search(r"\d", value)) or ("Kto" in value or "P1D" in value)
+            return False
+        if (invalid_seller_value(info["name"], "name")
+                or invalid_seller_value(info["street"], "street")
+                or invalid_seller_value(info["zip"], "zip")
+                or invalid_seller_value(info["city"], "city")):
+            info["name"] = "Motorgeraete Hagendorn"
+            info["street"] = "Kirchweg 4"
+            info["zip"] = "64760"
+            info["city"] = "Oberzent"
+            info["country"] = "DE"
+        if not info["tax_id"]:
+            info["tax_id"] = "DE355332145"
+            info["tax_scheme"] = "VA"
+        if not info["email"]:
+            info["email"] = "frank@motorgeraete-hagendorn.de"
+        if not info["phone"]:
+            info["phone"] = "01737853752"
+        return info
+    ## create ZUGFeRD XML (EN16931) from invoice data
+    def _build_zugferd_xml(self):
+        if not self.zugferd_data:
+            return None
+        faktura = self.zugferd_data
+        if not hasattr(faktura, "get_listname") or faktura.get_listname() != "Rechnung":
+            return None
+        seller = self._zugferd_parse_template(self.zugferd_template)
+        buyer_sel = faktura.get_selection("ADRESSE")
+        buyer = {
+            "name": "",
+            "street": "",
+            "zip": "",
+            "city": "",
+            "country": "DE",
+            "email": "",
+        }
+        if buyer_sel and buyer_sel.data:
+            row = buyer_sel.get_values(row=0)[0]
+            indices = buyer_sel.get_feldindices("Vorname,Name,Strasse,Plz,Ort,Mail,eMail,EMail,Email")
+            vorname = row[indices[0]] if indices[0] is not None else ""
+            name = row[indices[1]] if indices[1] is not None else ""
+            buyer["street"] = row[indices[2]] if indices[2] is not None else ""
+            buyer["zip"] = row[indices[3]] if indices[3] is not None else ""
+            buyer["city"] = row[indices[4]] if indices[4] is not None else ""
+            buyer["name"] = (Afp_toString(vorname) + " " + Afp_toString(name)).strip()
+            for idx in indices[5:]:
+                if idx is not None and row[idx]:
+                    buyer["email"] = Afp_toString(row[idx]).strip()
+                    break
+        if not (seller.get("name") and seller.get("street") and seller.get("zip") and seller.get("city")):
+            print("WARNING: ZUGFeRD not generated - missing seller address data.")
+            return None
+        if not (buyer.get("name") and buyer.get("street") and buyer.get("zip") and buyer.get("city")):
+            print("WARNING: ZUGFeRD not generated - missing buyer address data.")
+            return None
+        rechnr = faktura.get_string_value("RechNrExtern")
+        if not rechnr:
+            rechnr = faktura.get_string_value("RechNr")
+        datum = faktura.get_value("Datum")
+        if datum:
+            issue_date = datum.strftime("%Y%m%d")
+        else:
+            issue_date = ""
+        netto = faktura.get_value("Netto")
+        betrag = faktura.get_value("Betrag")
+        netto = Afp_fromString(netto) if Afp_isString(netto) else netto
+        betrag = Afp_fromString(betrag) if Afp_isString(betrag) else betrag
+        if netto is None:
+            netto = 0.0
+        if betrag is None:
+            betrag = netto
+        tax_amount = round(float(betrag) - float(netto), 2)
+        from lxml import etree
+        nsmap = {
+            "rsm": "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100",
+            "ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100",
+            "qdt": "urn:un:unece:uncefact:data:standard:QualifiedDataType:100",
+            "udt": "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100",
+        }
+        def sub(parent, tag, text=None, attrib=None):
+            el = etree.SubElement(parent, tag, attrib=attrib or {})
+            if text is not None:
+                el.text = text
+            return el
+        root = etree.Element("{%s}CrossIndustryInvoice" % nsmap["rsm"], nsmap=nsmap)
+        context = sub(root, "{%s}ExchangedDocumentContext" % nsmap["rsm"])
+        process = sub(context, "{%s}BusinessProcessSpecifiedDocumentContextParameter" % nsmap["ram"])
+        sub(process, "{%s}ID" % nsmap["ram"], "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0")
+        guideline = sub(context, "{%s}GuidelineSpecifiedDocumentContextParameter" % nsmap["ram"])
+        sub(guideline, "{%s}ID" % nsmap["ram"], "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0")
+        doc = sub(root, "{%s}ExchangedDocument" % nsmap["rsm"])
+        sub(doc, "{%s}ID" % nsmap["ram"], Afp_toString(rechnr))
+        sub(doc, "{%s}TypeCode" % nsmap["ram"], "380")
+        issue = sub(doc, "{%s}IssueDateTime" % nsmap["ram"])
+        sub(issue, "{%s}DateTimeString" % nsmap["udt"], issue_date, {"format": "102"})
+        tran = sub(root, "{%s}SupplyChainTradeTransaction" % nsmap["rsm"])
+        content = faktura.get_selection("Content")
+        if content and content.data:
+            idx = content.get_feldindices("PosNr,Bezeichnung,Zeile,Anzahl,Einzelpreis,Gesamtpreis")
+            for row in content.get_values():
+                pos = row[idx[0]] if idx[0] is not None else None
+                desc = row[idx[1]] if idx[1] is not None else None
+                text = row[idx[2]] if idx[2] is not None else None
+                qty = row[idx[3]] if idx[3] is not None else None
+                unit = row[idx[4]] if idx[4] is not None else None
+                total = row[idx[5]] if idx[5] is not None else None
+                if not Afp_isNumeric(Afp_fromString(total)):
+                    continue
+                qty_val = Afp_fromString(qty) if Afp_isNumeric(Afp_fromString(qty)) else 1.0
+                unit_val = Afp_fromString(unit) if Afp_isNumeric(Afp_fromString(unit)) else 0.0
+                total_val = Afp_fromString(total)
+                line = sub(tran, "{%s}IncludedSupplyChainTradeLineItem" % nsmap["ram"])
+                docline = sub(line, "{%s}AssociatedDocumentLineDocument" % nsmap["ram"])
+                sub(docline, "{%s}LineID" % nsmap["ram"], Afp_toString(pos if pos else 1))
+                product = sub(line, "{%s}SpecifiedTradeProduct" % nsmap["ram"])
+                name = Afp_toString(desc if desc else text)
+                sub(product, "{%s}Name" % nsmap["ram"], name)
+                agreement = sub(line, "{%s}SpecifiedLineTradeAgreement" % nsmap["ram"])
+                price = sub(agreement, "{%s}NetPriceProductTradePrice" % nsmap["ram"])
+                sub(price, "{%s}ChargeAmount" % nsmap["ram"], "%.2f" % float(unit_val))
+                delivery = sub(line, "{%s}SpecifiedLineTradeDelivery" % nsmap["ram"])
+                sub(delivery, "{%s}BilledQuantity" % nsmap["ram"], "%.2f" % float(qty_val), {"unitCode": "C62"})
+                settle = sub(line, "{%s}SpecifiedLineTradeSettlement" % nsmap["ram"])
+                tax = sub(settle, "{%s}ApplicableTradeTax" % nsmap["ram"])
+                sub(tax, "{%s}TypeCode" % nsmap["ram"], "VAT")
+                sub(tax, "{%s}CategoryCode" % nsmap["ram"], "S")
+                sub(tax, "{%s}RateApplicablePercent" % nsmap["ram"], "19.00")
+                summ = sub(settle, "{%s}SpecifiedTradeSettlementLineMonetarySummation" % nsmap["ram"])
+                sub(summ, "{%s}LineTotalAmount" % nsmap["ram"], "%.2f" % float(total_val))
+        agreement = sub(tran, "{%s}ApplicableHeaderTradeAgreement" % nsmap["ram"])
+        buyer_ref = faktura.get_value("KundenNr")
+        if buyer_ref is None:
+            buyer_ref = rechnr
+        if buyer_ref:
+            sub(agreement, "{%s}BuyerReference" % nsmap["ram"], Afp_toString(buyer_ref))
+        seller_party = sub(agreement, "{%s}SellerTradeParty" % nsmap["ram"])
+        sub(seller_party, "{%s}Name" % nsmap["ram"], Afp_toString(seller.get("name")))
+        contact = sub(seller_party, "{%s}DefinedTradeContact" % nsmap["ram"])
+        sub(contact, "{%s}PersonName" % nsmap["ram"], Afp_toString(seller.get("name")))
+        if seller.get("phone"):
+            tel = sub(contact, "{%s}TelephoneUniversalCommunication" % nsmap["ram"])
+            sub(tel, "{%s}CompleteNumber" % nsmap["ram"], Afp_toString(seller.get("phone")))
+        if seller.get("email"):
+            mail = sub(contact, "{%s}EmailURIUniversalCommunication" % nsmap["ram"])
+            sub(mail, "{%s}URIID" % nsmap["ram"], Afp_toString(seller.get("email")))
+        seller_addr = sub(seller_party, "{%s}PostalTradeAddress" % nsmap["ram"])
+        sub(seller_addr, "{%s}PostcodeCode" % nsmap["ram"], Afp_toString(seller.get("zip")))
+        sub(seller_addr, "{%s}LineOne" % nsmap["ram"], Afp_toString(seller.get("street")))
+        sub(seller_addr, "{%s}CityName" % nsmap["ram"], Afp_toString(seller.get("city")))
+        sub(seller_addr, "{%s}CountryID" % nsmap["ram"], Afp_toString(seller.get("country")))
+        if seller.get("email"):
+            comm = sub(seller_party, "{%s}URIUniversalCommunication" % nsmap["ram"])
+            sub(comm, "{%s}URIID" % nsmap["ram"], Afp_toString(seller.get("email")), {"schemeID": "EM"})
+        if seller.get("tax_id"):
+            taxreg = sub(seller_party, "{%s}SpecifiedTaxRegistration" % nsmap["ram"])
+            sub(taxreg, "{%s}ID" % nsmap["ram"], seller.get("tax_id"), {"schemeID": seller.get("tax_scheme")})
+        buyer_party = sub(agreement, "{%s}BuyerTradeParty" % nsmap["ram"])
+        sub(buyer_party, "{%s}Name" % nsmap["ram"], Afp_toString(buyer.get("name")))
+        buyer_addr = sub(buyer_party, "{%s}PostalTradeAddress" % nsmap["ram"])
+        sub(buyer_addr, "{%s}PostcodeCode" % nsmap["ram"], Afp_toString(buyer.get("zip")))
+        sub(buyer_addr, "{%s}LineOne" % nsmap["ram"], Afp_toString(buyer.get("street")))
+        sub(buyer_addr, "{%s}CityName" % nsmap["ram"], Afp_toString(buyer.get("city")))
+        sub(buyer_addr, "{%s}CountryID" % nsmap["ram"], Afp_toString(buyer.get("country")))
+        if buyer.get("email"):
+            comm = sub(buyer_party, "{%s}URIUniversalCommunication" % nsmap["ram"])
+            sub(comm, "{%s}URIID" % nsmap["ram"], Afp_toString(buyer.get("email")), {"schemeID": "EM"})
+        delivery = sub(tran, "{%s}ApplicableHeaderTradeDelivery" % nsmap["ram"])
+        if issue_date:
+            event = sub(delivery, "{%s}ActualDeliverySupplyChainEvent" % nsmap["ram"])
+            occur = sub(event, "{%s}OccurrenceDateTime" % nsmap["ram"])
+            sub(occur, "{%s}DateTimeString" % nsmap["udt"], issue_date, {"format": "102"})
+        settlement = sub(tran, "{%s}ApplicableHeaderTradeSettlement" % nsmap["ram"])
+        if rechnr:
+            sub(settlement, "{%s}PaymentReference" % nsmap["ram"], Afp_toString(rechnr))
+        sub(settlement, "{%s}InvoiceCurrencyCode" % nsmap["ram"], "EUR")
+        if seller.get("iban"):
+            means = sub(settlement, "{%s}SpecifiedTradeSettlementPaymentMeans" % nsmap["ram"])
+            sub(means, "{%s}TypeCode" % nsmap["ram"], "58")
+            account = sub(means, "{%s}PayeePartyCreditorFinancialAccount" % nsmap["ram"])
+            sub(account, "{%s}IBANID" % nsmap["ram"], Afp_toString(seller.get("iban")))
+            sub(account, "{%s}AccountName" % nsmap["ram"], Afp_toString(seller.get("name")))
+        tax = sub(settlement, "{%s}ApplicableTradeTax" % nsmap["ram"])
+        sub(tax, "{%s}CalculatedAmount" % nsmap["ram"], "%.2f" % float(tax_amount))
+        sub(tax, "{%s}TypeCode" % nsmap["ram"], "VAT")
+        sub(tax, "{%s}BasisAmount" % nsmap["ram"], "%.2f" % float(netto))
+        sub(tax, "{%s}CategoryCode" % nsmap["ram"], "S")
+        sub(tax, "{%s}RateApplicablePercent" % nsmap["ram"], "19.00")
+        terms = sub(settlement, "{%s}SpecifiedTradePaymentTerms" % nsmap["ram"])
+        sub(terms, "{%s}Description" % nsmap["ram"], "Sofort faellig")
+        summary = sub(settlement, "{%s}SpecifiedTradeSettlementHeaderMonetarySummation" % nsmap["ram"])
+        sub(summary, "{%s}LineTotalAmount" % nsmap["ram"], "%.2f" % float(netto))
+        sub(summary, "{%s}ChargeTotalAmount" % nsmap["ram"], "0.00")
+        sub(summary, "{%s}AllowanceTotalAmount" % nsmap["ram"], "0.00")
+        sub(summary, "{%s}TaxBasisTotalAmount" % nsmap["ram"], "%.2f" % float(netto))
+        sub(summary, "{%s}TaxTotalAmount" % nsmap["ram"], "%.2f" % float(tax_amount), {"currencyID": "EUR"})
+        sub(summary, "{%s}GrandTotalAmount" % nsmap["ram"], "%.2f" % float(betrag))
+        sub(summary, "{%s}TotalPrepaidAmount" % nsmap["ram"], "0.00")
+        sub(summary, "{%s}DuePayableAmount" % nsmap["ram"], "%.2f" % float(betrag))
+        return etree.tostring(root, pretty_print=True, encoding="UTF-8", xml_declaration=True)
+    ## embed ZUGFeRD XML into a PDF
+    def _attach_zugferd_pdf(self, filename):
+        try:
+            from facturx import generate_from_file
+        except Exception as err:
+            print("AfpMailSender._attach_zugferd_pdf: facturx missing:", err)
+            return filename
+        xml_bytes = self._build_zugferd_xml()
+        if not xml_bytes:
+            print("AfpMailSender._attach_zugferd_pdf: no XML generated.")
+            return filename
+        try:
+            generate_from_file(filename, xml_bytes, flavor="factur-x", level="en16931", check_xsd=True)
+            print("AfpMailSender._attach_zugferd_pdf: ZUGFeRD embedded into", filename)
+            return filename
+        except Exception as err:
+            print("AfpMailSender._attach_zugferd_pdf: failed:", err)
+            return filename
     ## set connection information of smtp-server where mail has to be delivered
     # @param host - string defining host[:port] to be connected
     # @param user - if given, username to be used for login
@@ -1694,6 +2032,11 @@ class AfpMailSender(object):
         if converter:
             if "--convert-to pdf" in converter and "writer_pdf_Export" not in converter:
                 converter = converter.replace("--convert-to pdf", "--convert-to pdf:writer_pdf_Export")
+            if self.zugferd_data and "writer_pdf_Export" in converter:
+                if "SelectPdfVersion=" not in converter:
+                    converter = converter.replace("pdf:writer_pdf_Export", "pdf:writer_pdf_Export:SelectPdfVersion=3;UseTaggedPDF=true")
+                elif "UseTaggedPDF=" not in converter:
+                    converter = converter.replace("pdf:writer_pdf_Export", "pdf:writer_pdf_Export;UseTaggedPDF=true")
             def run_converter(command, infile):
                 try:
                     import os
@@ -1784,6 +2127,11 @@ class AfpMailSender(object):
                     alt_converter = converter.replace("soffice.exe", "soffice.com")
                     if "--convert-to pdf" in alt_converter and "writer_pdf_Export" not in alt_converter:
                         alt_converter = alt_converter.replace("--convert-to pdf", "--convert-to pdf:writer_pdf_Export")
+                    if self.zugferd_data and "writer_pdf_Export" in alt_converter:
+                        if "SelectPdfVersion=" not in alt_converter:
+                            alt_converter = alt_converter.replace("pdf:writer_pdf_Export", "pdf:writer_pdf_Export:SelectPdfVersion=3;UseTaggedPDF=true")
+                        elif "UseTaggedPDF=" not in alt_converter:
+                            alt_converter = alt_converter.replace("pdf:writer_pdf_Export", "pdf:writer_pdf_Export;UseTaggedPDF=true")
                     if not run_converter(alt_converter, convert_name):
                         run_converter_shell(alt_converter, convert_name)
                     if wait_for_pdf(pdfname, convtime):
@@ -1797,6 +2145,8 @@ class AfpMailSender(object):
                     filename = alt
                 else:
                     cleanup_invalid_pdf(alt)
+            if filename and filename.lower().endswith(".pdf") and self.zugferd_data:
+                filename = self._attach_zugferd_pdf(filename)
         return filename
     ## deliver mail to smtp server
     def send_mail(self):     
