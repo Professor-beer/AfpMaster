@@ -321,10 +321,23 @@ def AfpLoad_FaArtikelAusw(globals, index, value = "", datei = "ARTIKEL", where =
         if not value: value = ""
         value, Ok = AfpReq_Text("Bitte Suchbegriff für Artikelauswahl eingeben:", "", value, "Artikelauswahl")
     if Ok and value:
-        if value[0] == "!":  direct = True
+        bang = False
+        if value[0] == "!":
+            direct = True
+            bang = True
         index = AfpFaktura_identifyIndex(value, globals.get_value("short-manu-max-len", "Faktura"))
         if index == "EAN" or (direct and index == "ArtikelNr") :
             Ok = None
+        elif index == "ArtikelNr" and manu and datei != "ARTIKEL" and datei != "Artikel":
+            ken = manu.get_value("Kennung")
+            if ken and value.startswith(ken + " "):
+                value = value[len(ken) + 1:].strip()
+        elif index == "ArtikelNr" and datei != "ARTIKEL" and datei != "Artikel":
+            probe = value[1:] if bang else value
+            ken = AfpFaktura_getShortManu(probe, globals.get_value("short-manu-max-len", "Faktura"))
+            if ken and probe.startswith(ken + " "):
+                probe = probe[len(ken) + 1:].strip()
+                value = "!" + probe if bang else probe
     #print("AfpLoad_FaArtikelAusw index:", index, value, Ok)
     if Ok:
         if datei == "ARTIKEL" or datei == "Artikel":
@@ -371,10 +384,11 @@ class AfpDialog_FaCustomSelect(AfpDialog):
         self.col_percents = [25, 15, 10, 50]
         self.ident = []
         self._ctx_row = None
+        self.active = False
         AfpDialog.__init__(self,None, -1, "")
         self.SetSize((650,415))
         self.SetTitle("Schnellauswahl")
-        #self.Bind(wx.EVT_ACTIVATE, self.On_Activate)
+        self.Bind(wx.EVT_ACTIVATE, self.On_Activate)
         
     ## set up dialog widgets - overwritten from AfpDialog
     def InitWx(self):
@@ -618,6 +632,22 @@ class AfpDialog_FaCustomSelect(AfpDialog):
             mysql.execute("DELETE FROM " + ctable + " WHERE RechNr = " + main_nr)
         mysql.execute("DELETE FROM ARCHIV WHERE Tab = " + Afp_toQuotedString(main_table) + " AND TabNr = " + main_nr)
         mysql.execute("DELETE FROM " + main_table + " WHERE RechNr = " + main_nr)
+        mysql.db_cursor.execute("COMMIT;")
+        try:
+            max_rows = mysql.execute("SELECT MAX(RechNr) FROM " + main_table)
+            max_nr = 0
+            if max_rows and max_rows[0] and max_rows[0][0]:
+                max_nr = max_rows[0][0]
+            next_nr = max_nr + 1 if max_nr else 1
+            try:
+                table_name = mysql.get_dbname(main_table)
+            except Exception:
+                table_name = main_table
+            mysql.execute("ALTER TABLE " + table_name + " AUTO_INCREMENT = " + Afp_toString(next_nr))
+            mysql.db_cursor.execute("COMMIT;")
+        except Exception as err:
+            if self.debug:
+                print("AfpDialog_FaCustomSelect._delete_entry: AUTO_INCREMENT reset failed:", err)
         self.Pop_Auswahl()
 
     ## Eventhandler Grid RightClick - invoke memo edit
@@ -753,8 +783,12 @@ class AfpDialog_FaCustomSelect(AfpDialog):
     ## event handler when window is activated
     # @param event - event which initiated this action   
     def On_Activate(self,event):
-        if not self.active:
-            print("Event handler `On_Activate' not implemented")
+        if event.GetActive():
+            if self.active:
+                self.Pop_Auswahl()
+            else:
+                self.active = True
+        event.Skip()
      
 # end of class AfpDialog_FaCustomSelect
 ## loader routine for custom Faktura selection
@@ -1137,7 +1171,7 @@ class AfpDialog_FaArticle(AfpDialog):
         hnr = self.data.get_value("HersNr")
         if hnr:
             ind = self.hers_idents.index(hnr)
-            if ind:
+            if ind is not None:
                 self.combo_Hers.SetValue(self.hers_liste[ind])
         if self.fix_hersteller:
              self.combo_Hers.SetBackgroundColour(self.readonlycolor)
@@ -1297,16 +1331,34 @@ class AfpDialog_FaArticle(AfpDialog):
     def On_KillArtikel(self,event = None):
         artnr = self.text_ArtikelNr.GetValue().strip()
         ken = AfpFaktura_getShortManu(artnr, self.midentlen)
-        if self.hersteller.get_value("Kennung") != ken:
+        hken = None
+        if not self.hersteller and ken:
+            self.hersteller = AfpManufact(self.data.get_globals(), ken, "Kennung")
+            if self.hersteller:
+                hersnr = self.hersteller.get_value("HersNr")
+                if hersnr:
+                    self.data.set_value("HersNr", hersnr)
+                    self.changed = True
+                    self.Pop_combo()
+        if self.hersteller:
+            hken = self.hersteller.get_value("Kennung")
+        if hken != ken:
             if self.fix_hersteller:
-                if ken: artnr = artnr[len(ken):].strip()
-                artnr =  self.hersteller.get_value("Kennung") + " " + artnr
+                if not hken:
+                    return
+                if ken:
+                    artnr = artnr[len(ken):].strip()
+                artnr = hken + " " + artnr
                 self.text_ArtikelNr.SetValue(artnr)
             else:
-                self.hersteller = AfpManufact(self.data.get_globals(), Ken, "Kennung")
-                self.data.set_value("HersNr", self.hersteller.get_value("HersNr"))
-                self. changed = True
-                self.Pop_combo()
+                if ken:
+                    self.hersteller = AfpManufact(self.data.get_globals(), ken, "Kennung")
+                    if self.hersteller:
+                        hersnr = self.hersteller.get_value("HersNr")
+                        if hersnr:
+                            self.data.set_value("HersNr", hersnr)
+                            self.changed = True
+                            self.Pop_combo()
         if event:
             self.On_KillFocus(event)
     ## common Eventhandler TEXTBOX - when leaving the textboxes - overwritten from AfpDialog
@@ -1345,14 +1397,41 @@ class AfpDialog_FaArticle(AfpDialog):
     def On_Hersteller(self,event):
         if self.debug: print("AfpDialog_FaArticle Event handler `On_Hersteller'")
         if not self.fix_hersteller:
-            ken = self.combo_Hers.GetValue().split()[0]
-            print("AfpDialog_FaArticle.On_Hersteller set:", ken)
-            self.hersteller = AfpManufact(self.data.get_globals(), ken, "Kennung")
+            ken = ""
+            hnr = None
+            sel = self.combo_Hers.GetSelection()
+            if sel != wx.NOT_FOUND and sel < len(self.hers_idents):
+                hnr = self.hers_idents[sel]
+            else:
+                val = self.combo_Hers.GetValue().strip()
+                if val:
+                    ken = val.split()[0]
+                if ken and self.hers_liste:
+                    for i, entry in enumerate(self.hers_liste):
+                        if entry and entry.strip().startswith(ken):
+                            hnr = self.hers_idents[i]
+                            break
+                if not hnr and val and self.hers_liste:
+                    lval = val.lower()
+                    for i, entry in enumerate(self.hers_liste):
+                        if entry and lval in entry.lower():
+                            hnr = self.hers_idents[i]
+                            break
+            print("AfpDialog_FaArticle.On_Hersteller set:", ken, hnr)
+            if hnr:
+                self.hersteller = AfpManufact(self.data.get_globals(), hnr, "HersNr")
+            elif ken:
+                self.hersteller = AfpManufact(self.data.get_globals(), ken, "Kennung")
+            else:
+                return
+            hken = self.hersteller.get_value("Kennung")
+            if not hken:
+                return
             artnr = self.text_ArtikelNr.GetValue().strip()
             ken = AfpFaktura_getShortManu(artnr, self.midentlen)
-            if self.hersteller.get_value("Kennung") != ken:
+            if hken != ken:
                 if ken: artnr = artnr[len(ken):].strip()
-                artnr =  self.hersteller.get_value("Kennung") + " " + artnr
+                artnr = hken + " " + artnr
                 self.text_ArtikelNr.SetValue(artnr)
     ##  Eventhandler BUTTON  create new article entry\n
     # @param event - event which initiated this action   

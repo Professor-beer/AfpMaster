@@ -281,6 +281,20 @@ def AfpFaktura_importArtikels(globals, data, filename, paras, debug = False, pro
             update += " WHERE a.HersNr = " + hersnr
         if debug: print("AfpFaktura_importArtikels update ARTIKEL:", update)
         mysql.execute(update)
+        if hersnr:
+            recalc = "SELECT a.ArtikelNr FROM " + mysql.get_dbname("ARTIKEL") + " a JOIN " + mysql.get_dbname(mantable_db) + " m ON " + match + " WHERE a.HersNr = " + hersnr
+            if debug: print("AfpFaktura_importArtikels recalc list:", recalc)
+            rows = mysql.execute(recalc)
+            if rows:
+                for row in rows:
+                    art = AfpArtikel(globals, row[0], debug)
+                    art = data.gen_prices(art)
+                    prsgrp = art.get_value("PreisGrp")
+                    lstp = art.get_value("Listenpreis")
+                    sur = data.get_surcharge(prsgrp, lstp)
+                    if sur is not None:
+                        art.set_value("Handelsspanne", sur)
+                    art.store()
     if debug: print ("AfpFaktura_importArtikels stored:", Afp_getNow().time())
 
 ## baseclass for memo handling 

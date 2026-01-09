@@ -1548,6 +1548,10 @@ class AfpDialog_Auswahl(wx.Dialog):
         value = self.search
         text, Ok = AfpReq_Text("Suche in Datei " + self.datei.capitalize() + ".", "Bitte Suchbegriff eingeben:", value, "Texteingabe Suche")
         if Ok:
+            if self.datei and self.datei.upper().startswith("ART_") and " " in text:
+                head, rest = text.split(" ", 1)
+                if head.isalpha() and len(head) <= 3 and rest.strip():
+                    text = rest.strip()
             select = self.select.split()
             self.search = text
             self.select = select[0] + " " + select[1] + " \"" + text + "\""
